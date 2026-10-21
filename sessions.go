@@ -30,7 +30,7 @@ type sessionsLoaded struct {
 func readSessions() sessionsLoaded {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ai-sessions", "--json", "-n", "0")
+	cmd := exec.CommandContext(ctx, "agents-list", "--json", "-n", "0")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 
-READER = Path(__file__).resolve().parent / "bin/ai-sessions"
+READER = Path(__file__).resolve().parent / "bin/agents-list"
 reader = runpy.run_path(str(READER))
 SESSION = "12345678-1234-1234-1234-123456789abc"
 

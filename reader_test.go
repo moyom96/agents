@@ -20,7 +20,7 @@ with sqlite3.connect(p / 'opencode.db') as db:
 	if output, err := exec.Command("python3", "-c", fixture, dir).CombinedOutput(); err != nil {
 		t.Fatalf("prepare database: %v: %s", err, output)
 	}
-	cmd := exec.Command("python3", "bin/ai-sessions", "--client", "opencode", "--json")
+	cmd := exec.Command("python3", "bin/agents-list", "--client", "opencode", "--json")
 	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+dir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -37,8 +37,11 @@ with sqlite3.connect(p / 'opencode.db') as db:
 
 func TestCursorReaderListsNamedRootSessionsAndResumeCommands(t *testing.T) {
 	dir := t.TempDir()
-	script := `import importlib.machinery, json, pathlib, sqlite3, sys
-reader = importlib.machinery.SourceFileLoader('sessions', 'bin/ai-sessions').load_module()
+	script := `import importlib.machinery, importlib.util, json, pathlib, sqlite3, sys
+loader = importlib.machinery.SourceFileLoader('sessions', 'bin/agents-list')
+spec = importlib.util.spec_from_loader(loader.name, loader)
+reader = importlib.util.module_from_spec(spec)
+loader.exec_module(reader)
 home = pathlib.Path(sys.argv[1])
 for session, extra in [('root', {}), ('child', {'isSubagent': True}), ('empty', {'hasConversation': False})]:
     folder = home / 'chats' / 'project-hash' / session
@@ -65,8 +68,11 @@ assert len(rows) == 1 and not rows[0]['title'], rows
 }
 
 func TestCursorReaderExcludesUnmarkedAgentScratchpads(t *testing.T) {
-	script := `import importlib.machinery, json, pathlib, sys
-reader = importlib.machinery.SourceFileLoader('sessions', 'bin/ai-sessions').load_module()
+	script := `import importlib.machinery, importlib.util, json, pathlib, sys
+loader = importlib.machinery.SourceFileLoader('sessions', 'bin/agents-list')
+spec = importlib.util.spec_from_loader(loader.name, loader)
+reader = importlib.util.module_from_spec(spec)
+loader.exec_module(reader)
 home = pathlib.Path(sys.argv[1])
 paths = {
     'delegated-mac': '/private/tmp/claude-1000/project/session/scratchpad/task',

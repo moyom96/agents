@@ -164,7 +164,7 @@ func (m model) View() tea.View {
 	if m.oldest {
 		sortOrder = "↑ oldest first"
 	}
-	header := accent.Bold(true).Render(" AI SESSIONS ") + muted.Render(fmt.Sprintf(" %d sessions · %s", len(m.sessions), sortOrder))
+	header := accent.Bold(true).Render(" AGENTS ") + muted.Render(fmt.Sprintf(" %d sessions · %s", len(m.sessions), sortOrder))
 	subtitle := " Find a conversation. Pick up where you left off."
 	leftWidth := min(30, m.width/3)
 	rightWidth := m.width - leftWidth - 1

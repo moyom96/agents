@@ -55,7 +55,7 @@ func readPreview(request previewRequested) previewLoaded {
 	result := previewLoaded{token: request.token}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "ai-sessions", "--client", request.row.Client, "--preview", request.row.ID, "--json").Output()
+	output, err := exec.CommandContext(ctx, "agents-list", "--client", request.row.Client, "--preview", request.row.ID, "--json").Output()
 	if decodeErr := json.Unmarshal(output, &result.data); decodeErr != nil {
 		if err == nil {
 			err = decodeErr

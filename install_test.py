@@ -28,15 +28,15 @@ class InstallerTest(unittest.TestCase):
 
     def test_installs_both_commands_and_default_settings(self):
         self.install()
-        self.assertEqual((self.root / "bin/ai-sessions-tui").read_bytes(), b"built browser")
-        self.assertTrue((self.root / "bin/ai-sessions").stat().st_mode & 0o111)
-        self.assertIn('target = "tmux-window"', (self.root / "config/ai-sessions/config.toml").read_text())
+        self.assertEqual((self.root / "bin/agents").read_bytes(), b"built browser")
+        self.assertTrue((self.root / "bin/agents-list").stat().st_mode & 0o111)
+        self.assertIn('target = "tmux-window"', (self.root / "config/agents/config.toml").read_text())
         self.assertFalse((self.root / ".claude").exists())
         self.assertFalse((self.root / "config/opencode").exists())
 
     def test_reinstall_preserves_settings(self):
         self.install()
-        config = self.root / "config/ai-sessions/config.toml"
+        config = self.root / "config/agents/config.toml"
         config.write_text('[launch]\ntarget = "terminal-tab"\n')
         self.install()
         self.assertIn("terminal-tab", config.read_text())
@@ -46,10 +46,10 @@ class InstallerTest(unittest.TestCase):
         directory.mkdir()
         source = self.root / "old-reader"
         source.write_text("old reader")
-        (directory / "ai-sessions").symlink_to(source)
+        (directory / "agents-list").symlink_to(source)
         self.install()
         self.assertEqual(source.read_text(), "old reader")
-        self.assertFalse((directory / "ai-sessions").is_symlink())
+        self.assertFalse((directory / "agents-list").is_symlink())
 
     def test_missing_go_does_not_install_partial_commands(self):
         with patch.object(installer.shutil, "which", return_value=None):

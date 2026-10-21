@@ -23,5 +23,5 @@ jobs:
           go-version-file: go.mod
       - run: go test ./...
       - run: go vet ./...
-      - run: go build -trimpath -o ai-sessions-tui .
+      - run: go build -trimpath -o agents .
       - run: python3 -m unittest discover -p '*_test.py'
