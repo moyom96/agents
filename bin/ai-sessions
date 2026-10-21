@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""List local coding sessions by last activity, without changing their history."""
+
+import argparse
+from collections import OrderedDict
+from datetime import datetime, timezone
+import json
+import os
+import re
+from pathlib import Path
+import shlex
+import sqlite3
+import sys
+
+
+def timestamp(value):
+    if isinstance(value, (int, float)):
+        return value / 1000 if value > 100_000_000_000 else value
+    if value:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    return 0
+
+
+def database_rows(path, query):
+    if not path.exists():
+        return []
+    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+        db.row_factory = sqlite3.Row
+        return [dict(row) for row in db.execute(query)]
+
+
+def codex_sessions(home):
+    index = {}
+    index_path = home / "session_index.jsonl"
+    if index_path.exists():
+        with index_path.open() as stream:
+            for line in stream:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                index[entry["id"]] = entry
+    rows = {}
+    for path in (home / "sessions").rglob("*.jsonl"):
+        with path.open() as stream:
+            try:
+                header = json.loads(stream.readline())
+            except ValueError:
+                continue
+        if header.get("type") != "session_meta":
+            continue
+        meta = header["payload"]
+        if "subagent" in json.dumps(meta.get("source", "")):
+            continue
+        session = meta["id"]
+        entry = index.get(session, {})
+        row = {"client": "codex", "id": session, "cwd": meta.get("cwd", ""),
+               "title": entry.get("thread_name", ""),
+               "activity": max(timestamp(entry.get("updated_at")), path.stat().st_mtime)}
+        if session not in rows or row["activity"] > rows[session]["activity"]:
+            rows[session] = row
+    return list(rows.values())
+
+
+def transcript_edges(path):
+    # Bounded reads avoid loading long tool outputs just to find session metadata.
+    with path.open("rb") as stream:
+        head = stream.read(131072)
+        size = stream.seek(0, 2)
+        if size <= len(head):
+            chunks = [head]
+        else:
+            stream.seek(max(0, size - 131072))
+            chunks = [head, stream.read().partition(b"\n")[2]]
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            try:
+                yield json.loads(line)
+            except (ValueError, UnicodeDecodeError):
+                continue
+
+
+def claude_sessions(home):
+    rows = []
+    for path in (home / "projects").glob("*/*.jsonl"):
+        row = {"client": "claude", "id": path.stem, "cwd": "", "title": "",
+               "activity": 0}
+        sidechain = False
+        for event in transcript_edges(path):
+            sidechain = sidechain or event.get("isSidechain", False)
+            row["cwd"] = event.get("cwd") or row["cwd"]
+            row["title"] = event.get("customTitle") or row["title"] or event.get("slug", "")
+            row["activity"] = max(row["activity"], timestamp(event.get("timestamp")))
+        if not sidechain:
+            row["activity"] = row["activity"] or path.stat().st_mtime
+            rows.append(row)
+    return rows
+
+
+def opencode_sessions(home):
+    path = home / "opencode" / "opencode.db"
+    if not path.exists():
+        return []
+    tables = database_rows(path, "SELECT name FROM sqlite_master WHERE type = 'table'")
+    rows = {}
+    active_tables = ("session_v2",) if {"name": "session_v2"} in tables else ("session",)
+    for table in active_tables:
+        if {"name": table} not in tables:
+            continue
+        for row in database_rows(path, f"""
+            SELECT id, directory AS cwd, title, time_updated FROM {table}
+            WHERE parent_id IS NULL AND time_archived IS NULL
+        """):
+            row["client"] = "opencode"
+            row["activity"] = timestamp(row.pop("time_updated"))
+            rows[row["id"]] = row
+    return list(rows.values())
+
+
+def cursor_sessions(home):
+    rows = []
+    for path in (home / "chats").glob("*/*/meta.json"):
+        try:
+            meta = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if meta.get("isSubagent") or not meta.get("hasConversation") or not meta.get("cwd"):
+            continue
+        if re.match(r"^/(?:private/)?tmp/claude-\d+/(?:.*/)?scratchpad(?:/|$)", meta["cwd"]):
+            continue
+        database = path.with_name("store.db")
+        title = ""
+        if database.exists():
+            mode = "?mode=ro" if database.with_name("store.db-wal").exists() else "?mode=ro&immutable=1"
+            try:
+                with sqlite3.connect(database.as_uri() + mode, uri=True) as db:
+                    db.create_function("decode_meta", 1, lambda value: bytes.fromhex(value).decode())
+                    result = db.execute("SELECT json_extract(decode_meta(value), '$.name') FROM meta WHERE key = '0'").fetchone()
+                    title = result[0] if result else ""
+            except sqlite3.Error:
+                pass
+        rows.append({"client": "cursor", "id": path.parent.name, "cwd": meta["cwd"],
+                     "title": title, "activity": timestamp(meta.get("updatedAtMs")) or path.stat().st_mtime})
+    return rows
+
+
+def clean(value):
+    return " ".join("".join(c for c in str(value or "") if c.isprintable()).split())
+
+
+def text_blocks(content):
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n\n".join(block.get("text", "") for block in content
+                         if isinstance(block, dict) and block.get("type") in
+                         ("text", "input_text", "output_text") and isinstance(block.get("text"), str))
+
+
+def preview_date(value):
+    try:
+        return datetime.fromtimestamp(timestamp(value), timezone.utc).isoformat() if value else ""
+    except (ValueError, TypeError, OverflowError, OSError):
+        return ""
+
+
+def transcript_preview(path, client):
+    messages = OrderedDict()
+    fallback = []
+    with path.open("rb") as stream:
+        size = stream.seek(0, 2)
+        stream.seek(max(0, size - 4 * 1024 * 1024))
+        if stream.tell():
+            stream.readline(4 * 1024 * 1024)
+        data = stream.read(4 * 1024 * 1024)
+    for index, line in enumerate(data.splitlines()):
+        try:
+            event = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        if client == "claude":
+            if event.get("isSidechain") or event.get("isMeta"):
+                continue
+            message = event.get("message", {})
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            text = text_blocks(message.get("content"))
+            key = message.get("id") or event.get("uuid") or str(index)
+        else:
+            message = event.get("payload", {})
+            if not isinstance(message, dict):
+                continue
+            if event.get("type") == "event_msg" and message.get("type") in ("user_message", "agent_message"):
+                fallback.append({"role": "user" if message["type"] == "user_message" else "assistant",
+                                 "text": message.get("message", ""), "timestamp": event.get("timestamp", "")})
+            if event.get("type") != "response_item" or message.get("type") != "message":
+                continue
+            role = message.get("role")
+            text = text_blocks(message.get("content"))
+            key = message.get("id") or str(index)
+        if role not in ("user", "assistant") or not text.strip():
+            continue
+        if key in messages:
+            previous = messages[key]["text"]
+            if previous.startswith(text):
+                text = previous
+            elif not text.startswith(previous):
+                text = previous + "\n\n" + text
+        messages[key] = {"role": role, "text": text, "timestamp": event.get("timestamp", "")}
+    return list(messages.values())[-6:] or fallback[-6:]
+
+
+def opencode_preview(home, session):
+    path = home / "opencode/opencode.db"
+    if not path.exists():
+        raise ValueError("OpenCode's saved database is unavailable.")
+    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+        db.row_factory = sqlite3.Row
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "session_v2" in tables:
+            query = """
+                SELECT type AS role, time_created,
+                       json_extract(data, '$.text') AS text,
+                       (SELECT json_group_array(json_extract(c.value, '$.text'))
+                        FROM json_each(m.data, '$.content') c
+                        WHERE json_extract(c.value, '$.type') = 'text') AS blocks
+                FROM session_message m WHERE session_id = ? AND type IN ('user', 'assistant')
+                AND (coalesce(json_extract(data, '$.text'), '') != '' OR EXISTS (
+                    SELECT 1 FROM json_each(m.data, '$.content') c
+                    WHERE json_extract(c.value, '$.type') = 'text'
+                    AND coalesce(json_extract(c.value, '$.text'), '') != ''))
+                ORDER BY seq DESC LIMIT 6
+            """
+        elif {"message", "part"} <= tables:
+            query = """
+                SELECT json_extract(m.data, '$.role') AS role, m.time_created,
+                       NULL AS text,
+                       (SELECT json_group_array(text) FROM (
+                            SELECT json_extract(p.data, '$.text') AS text FROM part p
+                            WHERE p.message_id = m.id AND p.session_id = m.session_id
+                            AND json_extract(p.data, '$.type') = 'text'
+                            AND coalesce(json_extract(p.data, '$.synthetic'), 0) = 0
+                            ORDER BY p.time_created, p.id)) AS blocks
+                FROM message m WHERE m.session_id = ?
+                AND json_extract(m.data, '$.role') IN ('user', 'assistant')
+                AND EXISTS (SELECT 1 FROM part p WHERE p.message_id = m.id AND p.session_id = m.session_id
+                            AND json_extract(p.data, '$.type') = 'text'
+                            AND coalesce(json_extract(p.data, '$.synthetic'), 0) = 0
+                            AND coalesce(json_extract(p.data, '$.text'), '') != '')
+                ORDER BY m.time_created DESC, m.id DESC LIMIT 6
+            """
+        else:
+            raise ValueError("This OpenCode message-store format is not supported yet.")
+        rows = list(db.execute(query, (session,)))
+        return [{"role": r["role"], "timestamp": r["time_created"],
+                 "text": "\n\n".join(t for t in ([r["text"]] if r["text"] else json.loads(r["blocks"]))
+                                     if isinstance(t, str))} for r in reversed(rows)]
+
+
+def session_preview(client, session, home):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", session):
+        raise ValueError("Invalid session ID.")
+    if client == "cursor":
+        return {"messages": [], "notice": "Cursor's local messages are encrypted. Resume this session to read them."}
+    if client == "opencode":
+        messages = opencode_preview(home, session)
+    else:
+        paths = list((home / "projects").glob(f"*/{session}.jsonl")) if client == "claude" else list((home / "sessions").rglob(f"*{session}.jsonl"))
+        if not paths:
+            raise ValueError("Saved transcript is unavailable. Refresh the session list.")
+        messages = transcript_preview(max(paths, key=lambda p: p.stat().st_mtime), client)
+    result = []
+    for message in messages:
+        text = message.get("text", "")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if len(text) > 12000:
+            text = text[:12000] + "\n[Message truncated]"
+        result.append({"role": message["role"], "text": text, "timestamp": preview_date(message.get("timestamp"))})
+    return {"messages": result, "notice": "Last six text messages. Long messages are truncated; transcript reads are limited to the last 4 MiB." if result else "No readable user or assistant text found in the saved preview window."}
+
+
+def resume_command(row):
+    client, session = row["client"], row["id"]
+    args = {"codex": ["codex", "resume", session],
+            "claude": ["claude", "--resume", session],
+            "opencode": ["opencode", "--session", session],
+            "cursor": ["cursor-agent", "--resume", session]}[client]
+    command = shlex.join(args)
+    return f"cd {shlex.quote(row['cwd'])} && {command}" if row["cwd"] else command
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("search", nargs="?", default="", help="Filter project, title, or session ID")
+    parser.add_argument("--client", choices=("codex", "claude", "opencode", "cursor"))
+    parser.add_argument("-n", "--limit", type=int, default=30, help="Rows to show (0 for all)")
+    parser.add_argument("--oldest", action="store_true", help="Show oldest sessions first")
+    parser.add_argument("--commands", action="store_true", help="Include commands to resume sessions")
+    parser.add_argument("--json", action="store_true", help="Print structured session metadata")
+    parser.add_argument("--preview", metavar="SESSION_ID", help="Print the last six saved text messages as JSON (requires --client)")
+    args = parser.parse_args()
+    if args.limit < 0:
+        parser.error("--limit must be zero or greater")
+    home = Path.home()
+    sources = {
+        "codex": (codex_sessions, Path(os.environ.get("CODEX_HOME", home / ".codex"))),
+        "claude": (claude_sessions, Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))),
+        "opencode": (opencode_sessions, Path(os.environ.get("XDG_DATA_HOME", home / ".local/share"))),
+        "cursor": (cursor_sessions, home / ".cursor"),
+    }
+    if args.preview:
+        if not args.client:
+            parser.error("--preview requires --client")
+        try:
+            print(json.dumps(session_preview(args.client, args.preview, sources[args.client][1].expanduser().resolve())))
+            return 0
+        except (OSError, sqlite3.Error, ValueError) as error:
+            print(json.dumps({"messages": [], "notice": str(error)}))
+            return 1
+    rows = []
+    failed = False
+    for client, (read, location) in sources.items():
+        if args.client and args.client != client:
+            continue
+        try:
+            rows.extend(read(location.expanduser().resolve()))
+        except (OSError, sqlite3.Error, ValueError) as error:
+            print(f"ai-sessions: {client}: {error}", file=sys.stderr)
+            failed = True
+    rows = [r for r in rows if args.search.lower() in
+            " ".join(str(r.get(k) or "") for k in ("title", "cwd", "id")).lower()]
+    rows.sort(key=lambda r: r["activity"], reverse=not args.oldest)
+    rows = rows[:args.limit] if args.limit else rows
+    for row in rows:
+        row["last_activity"] = datetime.fromtimestamp(row["activity"], timezone.utc).astimezone().isoformat(timespec="seconds")
+        row["resume"] = resume_command(row)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    elif rows:
+        print(f"{'LAST ACTIVITY (LOCAL)':26} {'CLIENT':9} {'PROJECT':24} TITLE / SESSION")
+        for row in rows:
+            date = datetime.fromtimestamp(row["activity"]).astimezone().strftime("%d/%m/%Y %H:%M:%S %Z")
+            project = clean(Path(row["cwd"]).name) if row["cwd"] else "?"
+            print(f"{date:26} {row['client']:9} {project[:24]:24} {clean(row['title'])[:65]} [{row['id']}]")
+            if args.commands:
+                print(f"  {row['resume']}")
+    else:
+        print("No matching sessions.")
+    return int(failed)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

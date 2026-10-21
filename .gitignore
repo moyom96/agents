@@ -1,0 +1,12 @@
+/ai-sessions-tui
+/dist/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+*.log
