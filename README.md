@@ -1,4 +1,4 @@
-# ai-sessions
+# agents
 
 Browse, search, preview, and resume local coding-agent sessions from one terminal interface.
 
@@ -17,7 +17,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 - Resume sessions in a new tmux window, leaving the browser open.
 - An optional native Alacritty tab launcher on macOS.
 - Persistent launch settings and confirmation before deleting saved history.
-- A separate `ai-sessions` command for listing, JSON output, and scripting.
+- A separate `agents-list` command for listing, JSON output, and scripting.
 
 ## Requirements
 
@@ -35,13 +35,13 @@ Windows is not currently supported.
 ## Install
 
 ```sh
-git clone https://github.com/moyom96/ai-sessions.git
-cd ai-sessions
+git clone https://github.com/moyom96/agents.git
+cd agents
 python3 install.py
 ```
 
-The installer builds `ai-sessions-tui` and copies it, along with the Python
-reader `ai-sessions`, into `~/.local/bin`. It creates the default config if
+The installer builds `agents` and copies it, along with the Python
+reader `agents-list`, into `~/.local/bin`. It creates the default config if
 missing and preserves existing settings. It does not edit client settings,
 shell startup files, or authentication files. Go downloads build dependencies;
 the browser itself reads local histories without making API calls.
@@ -68,7 +68,7 @@ Start the browser from inside tmux:
 
 ```sh
 tmux new-session -A -s main
-ai-sessions-tui
+agents
 ```
 
 The browser lists all available top-level sessions. Filters combine, and
@@ -124,8 +124,8 @@ Cursor editor conversations are outside this integration.
 ### Launch settings
 
 Press `,`, choose with arrows or `j` / `k`, and press `Enter` to save or `Esc` to
-cancel. The same setting can be edited in `~/.config/ai-sessions/config.toml`,
-or `$XDG_CONFIG_HOME/ai-sessions/config.toml` when set:
+cancel. The same setting can be edited in `~/.config/agents/config.toml`,
+or `$XDG_CONFIG_HOME/agents/config.toml` when set:
 
 ```toml
 [launch]
@@ -161,14 +161,14 @@ Project files and worktrees are kept.
 ### Command-line reader
 
 ```sh
-ai-sessions                          # newest 30 sessions
-ai-sessions -n 0                     # all sessions
-ai-sessions --client codex           # one client
-ai-sessions --oldest                 # oldest first
-ai-sessions example                  # filter project, title, or ID
-ai-sessions --commands -n 5          # include resume commands
-ai-sessions --json -n 0              # structured session metadata
-ai-sessions --client claude --preview SESSION_ID --json
+agents-list                          # newest 30 sessions
+agents-list -n 0                     # all sessions
+agents-list --client codex           # one client
+agents-list --oldest                 # oldest first
+agents-list example                  # filter project, title, or ID
+agents-list --commands -n 5          # include resume commands
+agents-list --json -n 0              # structured session metadata
+agents-list --client claude --preview SESSION_ID --json
 ```
 
 The TUI uses `--json -n 0`, so it has no 30-session cap.
@@ -211,8 +211,8 @@ git pull --ff-only
 python3 install.py
 ```
 
-To uninstall, remove `ai-sessions` and `ai-sessions-tui` from the install
-directory. Optionally remove the `ai-sessions` config directory. Installation
+To uninstall, remove `agents-list` and `agents` from the install
+directory. Optionally remove the `agents` config directory. Installation
 copies files, so the checkout can be removed without breaking the installed tool.
 
 ## Development
@@ -220,7 +220,7 @@ copies files, so the checkout can be removed without breaking the installed tool
 ```sh
 go test ./...
 go vet ./...
-go build -trimpath -o ai-sessions-tui .
+go build -trimpath -o agents .
 python3 -m unittest discover -p '*_test.py'
 ```
 

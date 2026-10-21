@@ -357,7 +357,7 @@ func (m *model) navigate(key string) {
 
 func main() {
 	if _, err := tea.NewProgram(newModel()).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "ai-sessions-tui:", err)
+		fmt.Fprintln(os.Stderr, "agents:", err)
 		os.Exit(1)
 	}
 }

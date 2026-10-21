@@ -330,7 +330,7 @@ def main():
         try:
             rows.extend(read(location.expanduser().resolve()))
         except (OSError, sqlite3.Error, ValueError) as error:
-            print(f"ai-sessions: {client}: {error}", file=sys.stderr)
+            print(f"agents: {client}: {error}", file=sys.stderr)
             failed = True
     rows = [r for r in rows if args.search.lower() in
             " ".join(str(r.get(k) or "") for k in ("title", "cwd", "id")).lower()]

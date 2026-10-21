@@ -47,7 +47,7 @@ func settingsPath() (string, error) {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "ai-sessions", "config.toml"), nil
+	return filepath.Join(dir, "agents", "config.toml"), nil
 }
 
 func saveLaunchTarget(target string) error {

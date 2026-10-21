@@ -1,4 +1,4 @@
-module github.com/moyom96/ai-sessions
+module github.com/moyom96/agents
 
 go 1.26.0
 

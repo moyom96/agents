@@ -20,10 +20,10 @@ func TestLaunchSettings(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("XDG_CONFIG_HOME", dir)
 			if tt.content != "" {
-				if err := os.Mkdir(filepath.Join(dir, "ai-sessions"), 0755); err != nil {
+				if err := os.Mkdir(filepath.Join(dir, "agents"), 0755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, "ai-sessions", "config.toml"), []byte(tt.content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "agents", "config.toml"), []byte(tt.content), 0644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -43,7 +43,7 @@ func TestLaunchSettingsUsesHomeAndReloads(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(home, ".config", "ai-sessions")
+	dir := filepath.Join(home, ".config", "agents")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}

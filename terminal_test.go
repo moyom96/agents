@@ -88,7 +88,7 @@ esac
 }
 
 func TestAlacrittyTabLive(t *testing.T) {
-	if os.Getenv("AI_SESSIONS_TAB_SMOKE") != "1" {
+	if os.Getenv("AGENTS_TAB_SMOKE") != "1" {
 		t.Skip("opt-in test opens and closes a native Alacritty tab")
 	}
 	dir := t.TempDir()
