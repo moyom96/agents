@@ -8,6 +8,10 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 [Huh](https://github.com/charmbracelet/huh), and
 [Lip Gloss](https://github.com/charmbracelet/lipgloss).
 
+![agents demo: navigating, filtering, and searching mock sessions](docs/screenshots/demo.gif)
+
+*Recorded with fictional sessions, projects, and paths.*
+
 ## Features
 
 - Sessions sorted by last activity, with full local dates and sort indicators.
