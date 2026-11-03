@@ -34,8 +34,8 @@ var remoteStatuses = map[string]struct {
 }{
 	"started":                    {0, "Continue on your phone: open the Claude app, tap Code, and look for this session."},
 	"already_remote":             {0, "This session is already available on your phone."},
-	"ready":                      {0, "Continue on your phone: open the ChatGPT app, go to Codex, and look for this session. If this Mac isn't listed, pair once at the laptop with `codex remote-control pair`."},
-	"ready_warning":              {0, "Continue on your phone in the ChatGPT app under Codex. This session also looks open in a terminal, so messages from the phone and the terminal can diverge."},
+	"ready":                      {0, "Nothing to start: the Codex remote-control daemon is running, so every Codex session is already in the ChatGPT app under Codex. If this Mac isn't listed, pair once at the laptop with `codex remote-control pair`."},
+	"ready_warning":              {0, "Nothing to start: this session is already in the ChatGPT app under Codex. It also looks open in a terminal, so messages from the phone and the terminal can diverge."},
 	"stopped":                    {0, "Stopped the remote session."},
 	"unconfirmed":                {3, "Claude started, but Remote Control did not confirm the connection in time. Check the Claude app, or stop the session with `agents remote --stop`."},
 	"unknown_session":            {2, "No saved session has this ID. Run `agents-list` to find it."},
