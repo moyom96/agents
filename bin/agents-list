@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 import shlex
 import sqlite3
+import subprocess
 import sys
 
 
@@ -284,6 +285,68 @@ def session_preview(client, session, home):
     return {"messages": result, "notice": "Last six text messages. Long messages are truncated; transcript reads are limited to the last 4 MiB." if result else "No readable user or assistant text found in the saved preview window."}
 
 
+def git_output(*args):
+    try:
+        return subprocess.run(("git",) + args, capture_output=True, text=True, timeout=15, check=True).stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+
+
+def find_repository(cwd, projects):
+    fallback = {"project": cwd, "worktree": ""}
+    if not cwd:
+        return fallback
+    directory = Path(cwd)
+    while not directory.is_dir():
+        if directory.parent == directory:
+            return fallback
+        directory = directory.parent
+    paths = git_output("-C", str(directory), "rev-parse", "--path-format=absolute",
+                       "--show-toplevel", "--git-common-dir").strip().split("\n")
+    if len(paths) != 2:
+        return fallback
+    worktree, common = paths
+    if common not in projects:
+        first = git_output("--git-dir", common, "worktree", "list", "--porcelain", "-z").partition("\0")[0]
+        if not first.startswith("worktree ") or first == "worktree ":
+            return fallback
+        projects[common] = first[len("worktree "):]
+    return {"project": projects[common], "worktree": worktree}
+
+
+def attach_projects(rows):
+    locations, projects = {}, {}
+    for row in rows:
+        cwd = row.get("cwd") or ""
+        if cwd not in locations:
+            locations[cwd] = find_repository(cwd, projects)
+        row.update(locations[cwd])
+
+
+def project_matches(row, query):
+    project = row["project"].lower()
+    return query.lower() in (project, Path(project).name)
+
+
+def last_message(row, home):
+    try:
+        preview = session_preview(row["client"], row["id"], home)
+    except (OSError, sqlite3.Error, ValueError) as error:
+        return {"last_message": None, "notice": str(error)}
+    if not preview["messages"]:
+        return {"last_message": None, "notice": preview["notice"]}
+    message = preview["messages"][-1]
+    return {"last_message": {"role": message["role"], "date": message["timestamp"],
+                             "text": message["text"][:500], "untrusted": True}}
+
+
+def last_message_line(row):
+    message = row["last_message"]
+    if not message:
+        return clean(" ".join(row["notice"].split()))[:120]
+    return f"{message['role']}: {clean(' '.join(message['text'].split()))}"[:120]
+
+
 def resume_command(row):
     client, session = row["client"], row["id"]
     args = {"codex": ["codex", "resume", session],
@@ -300,6 +363,9 @@ def main():
     parser.add_argument("--client", choices=("codex", "claude", "opencode", "cursor"))
     parser.add_argument("-n", "--limit", type=int, default=30, help="Rows to show (0 for all)")
     parser.add_argument("--oldest", action="store_true", help="Show oldest sessions first")
+    parser.add_argument("--project", help="Only sessions in this repository, by name or full path (exact match, worktrees included)")
+    parser.add_argument("--title", help="Only sessions whose title contains this text")
+    parser.add_argument("--last-message", action="store_true", help="Include each session's last message (untrusted session text)")
     parser.add_argument("--commands", action="store_true", help="Include commands to resume sessions")
     parser.add_argument("--json", action="store_true", help="Print structured session metadata")
     parser.add_argument("--preview", metavar="SESSION_ID", help="Print the last six saved text messages as JSON (requires --client)")
@@ -334,11 +400,18 @@ def main():
             failed = True
     rows = [r for r in rows if args.search.lower() in
             " ".join(str(r.get(k) or "") for k in ("title", "cwd", "id")).lower()]
+    if args.title is not None:
+        rows = [r for r in rows if args.title.lower() in str(r.get("title") or "").lower()]
+    if args.project is not None:
+        attach_projects(rows)
+        rows = [r for r in rows if project_matches(r, args.project)]
     rows.sort(key=lambda r: r["activity"], reverse=not args.oldest)
     rows = rows[:args.limit] if args.limit else rows
     for row in rows:
         row["last_activity"] = datetime.fromtimestamp(row["activity"], timezone.utc).astimezone().isoformat(timespec="seconds")
         row["resume"] = resume_command(row)
+        if args.last_message:
+            row.update(last_message(row, sources[row["client"]][1].expanduser().resolve()))
     if args.json:
         print(json.dumps(rows, indent=2))
     elif rows:
@@ -349,6 +422,8 @@ def main():
             print(f"{date:26} {row['client']:9} {project[:24]:24} {clean(row['title'])[:65]} [{row['id']}]")
             if args.commands:
                 print(f"  {row['resume']}")
+            if args.last_message:
+                print(f"  {last_message_line(row)}")
     else:
         print("No matching sessions.")
     return int(failed)

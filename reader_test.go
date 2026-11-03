@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -93,5 +94,45 @@ assert {r['id'] for r in rows} == {'regular-temp', 'regular-scratchpad', 'worktr
 	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Cursor scratchpad filtering: %v: %s", err, output)
+	}
+}
+
+func TestReaderAddsProjectAndLastMessageOnlyWhenRequested(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "work", "notes")
+	folder := filepath.Join(dir, "claude", "projects", "notes")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	event := `{"type":"user","cwd":"` + project + `","timestamp":"2026-10-20T10:00:00Z","message":{"role":"user","content":"Ship it"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(folder, "session-1.jsonl"), []byte(event), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := func(args ...string) []map[string]any {
+		cmd := exec.Command("python3", append([]string{"bin/agents-list", "--client", "claude", "--json", "-n", "0"}, args...)...)
+		cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+filepath.Join(dir, "claude"))
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("read sessions: %v: %s", err, output)
+		}
+		var rows []map[string]any
+		if err := json.Unmarshal(output, &rows); err != nil || len(rows) != 1 {
+			t.Fatalf("unexpected rows: %v: %s", err, output)
+		}
+		return rows
+	}
+	plain := read()[0]
+	for _, key := range []string{"project", "worktree", "last_message"} {
+		if _, found := plain[key]; found {
+			t.Fatalf("%s present without its flag: %v", key, plain)
+		}
+	}
+	row := read("--project", "notes", "--last-message")[0]
+	message, _ := row["last_message"].(map[string]any)
+	if row["project"] != project || row["worktree"] != "" || message["text"] != "Ship it" || message["untrusted"] != true {
+		t.Fatalf("unexpected filtered row: %v", row)
 	}
 }
