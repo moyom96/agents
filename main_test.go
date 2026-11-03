@@ -163,8 +163,11 @@ func TestTmuxLaunchTargetsBrowserSessionAndQuotesArguments(t *testing.T) {
 	if args[0] != "new-window" || args[2] != "$7:" || args[6] != dir {
 		t.Fatalf("wrong tmux arguments: %q", args)
 	}
-	if !strings.Contains(args[len(args)-1], quote(row.ID)) {
+	if !strings.Contains(args[len(args)-6], quote(row.ID)) {
 		t.Fatal("session ID was not shell quoted")
+	}
+	if tag := args[len(args)-5:]; tag[0] != ";" || tag[3] != "@agents-local" || tag[4] != "codex:"+row.ID {
+		t.Fatalf("window was not tagged for handoff detection: %q", tag)
 	}
 }
 

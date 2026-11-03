@@ -38,7 +38,8 @@ func resumeArgs(row session) ([]string, error) {
 
 func windowArgs(row session, target, shell string, resume []string) []string {
 	return []string{"new-window", "-t", target + ":", "-n", clean(row.Client + ":" + filepath.Base(row.Cwd)),
-		"-c", row.Cwd, "--", shell, "-lic", resumeCommand(shell, resume)}
+		"-c", row.Cwd, "--", shell, "-lic", resumeCommand(shell, resume),
+		";", "set-option", "-w", "@agents-local", row.Client + ":" + row.ID}
 }
 
 func resumeCommand(shell string, resume []string) string {
