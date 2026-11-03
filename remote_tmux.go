@@ -1,17 +1,22 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const remoteSession = "agents-remote"
 
-var remoteTmuxSocket = ""
+var (
+	remoteTmuxSocket = ""
+	commandTimeout   = 10 * time.Second
+)
 
 type remoteWindow struct {
 	ID, Key string
@@ -23,8 +28,10 @@ func tmux(args ...string) (string, error) {
 	if remoteTmuxSocket != "" {
 		args = append([]string{"-S", remoteTmuxSocket}, args...)
 	}
-	cmd := exec.Command("tmux", args...)
-	cmd.Env = withoutEnv(os.Environ(), "TMUX", "TMUX_PANE")
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	cmd.Env = withoutEnv(os.Environ(), nestedAgentEnv...)
 	output, err := cmd.Output()
 	return strings.TrimSpace(string(output)), err
 }
@@ -46,18 +53,22 @@ func withoutEnv(environ []string, names ...string) []string {
 
 var tmuxVersion = regexp.MustCompile(`(\d+)\.(\d+)`)
 
-func tmuxSupported() bool {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return false
-	}
-	output, err := exec.Command("tmux", "-V").Output()
-	match := tmuxVersion.FindStringSubmatch(string(output))
-	if err != nil || match == nil {
+func tmuxVersionSupported(version string) bool {
+	match := tmuxVersion.FindStringSubmatch(version)
+	if match == nil {
 		return false
 	}
 	major, _ := strconv.Atoi(match[1])
 	minor, _ := strconv.Atoi(match[2])
 	return major > 3 || major == 3 && minor >= 2
+}
+
+func tmuxSupported() bool {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return false
+	}
+	output, err := exec.Command("tmux", "-V").Output()
+	return err == nil && tmuxVersionSupported(string(output))
 }
 
 func remoteWindows() []remoteWindow {
@@ -103,17 +114,22 @@ func remoteWindowFor(key string) (remoteWindow, bool) {
 
 func createRemoteWindow(name, cwd string, payload []string) (string, error) {
 	command := []string{"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "=" + remoteSession + ":", "-n", name, "-c", cwd, "--"}
+	command = append(command, payload...)
 	if _, err := tmux("has-session", "-t", "="+remoteSession); err != nil {
 		command = []string{"new-session", "-d", "-P", "-F", "#{window_id}", "-s", remoteSession, "-x", "200", "-y", "50", "-n", name, "-c", cwd, "--"}
+		command = append(command, payload...)
+		command = append(command, ";", "set-option", "-w", "remain-on-exit", "on",
+			";", "set-hook", "after-new-window", "set-option -w remain-on-exit on")
 	}
-	id, err := tmux(append(command, payload...)...)
+	id, err := tmux(command...)
+	id, _, _ = strings.Cut(id, "\n")
 	if err != nil || !strings.HasPrefix(id, "@") {
 		return "", fmt.Errorf("tmux could not create the remote window")
 	}
 	return id, nil
 }
 
-func tagWindow(id, option, value string) error {
+func setWindowOption(id, option, value string) error {
 	_, err := tmux("set-option", "-w", "-t", id, option, value)
 	return err
 }
@@ -137,4 +153,9 @@ func localWindows(key string) []localWindow {
 		}
 	}
 	return windows
+}
+
+func remoteServerSocket() string {
+	socket, _ := tmux("display-message", "-p", "-t", "="+remoteSession+":", "#{socket_path}")
+	return socket
 }

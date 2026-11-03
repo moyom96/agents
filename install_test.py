@@ -103,6 +103,11 @@ class InstallerTest(unittest.TestCase):
             self.install(homes)
         self.assertEqual(own.read_text(), "linked skill")
 
+    def test_skill_homes_follow_client_overrides(self):
+        claude, codex = self.root / "my-claude", self.root / "my-codex"
+        with patch.dict(installer.os.environ, {"CLAUDE_CONFIG_DIR": str(claude), "CODEX_HOME": str(codex)}):
+            self.assertEqual(installer.skill_homes(), {"Claude": claude.resolve(), "Codex": codex.resolve()})
+
     def test_default_install_creates_no_skill_directories(self):
         homes = self.homes("Claude", "Codex")
         self.install()

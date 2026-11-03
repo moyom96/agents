@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -17,6 +18,9 @@ var (
 	tuiAttach   = func(window string) error {
 		if os.Getenv("TMUX") == "" {
 			return fmt.Errorf("start this browser inside tmux to attach to a remote session")
+		}
+		if socket, _, _ := strings.Cut(os.Getenv("TMUX"), ","); socket != remoteServerSocket() {
+			return fmt.Errorf("remote sessions run on the default tmux server; attach with `tmux attach -t %s`", remoteSession)
 		}
 		if output, err := exec.Command("tmux", "switch-client", "-t", window).CombinedOutput(); err != nil {
 			return fmt.Errorf("attach to the remote session: %v. %s", err, clean(string(output)))
@@ -50,12 +54,7 @@ func listRemoteCmd() tea.Cmd {
 }
 
 func (m model) isRemote(row session) bool {
-	for _, listing := range m.remote {
-		if listing.Client == row.Client && listing.ID == row.ID {
-			return true
-		}
-	}
-	return false
+	return m.remoteWindow(row) != ""
 }
 
 func (m model) remoteWindow(row session) string {
@@ -121,10 +120,26 @@ func (m model) updateRemotePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if err := tuiClose(window); err != nil {
 				return remoteHandedOff{row: prompt.row, result: newResult(prompt.row, "tmux_failed")}
 			}
-			return remoteHandedOff{row: prompt.row, result: tuiHandoff(prompt.row, remoteOptions{})}
+			return remoteHandedOff{row: prompt.row, result: handoffAfterClose(prompt.row)}
 		}
 	}
 	return m, nil
+}
+
+var closeWait = 300 * time.Millisecond
+
+// The closed window's client exits asynchronously after SIGHUP, so retry
+// briefly instead of reporting the session as open elsewhere.
+func handoffAfterClose(row session) remoteResult {
+	result := tuiHandoff(row, remoteOptions{})
+	for range 10 {
+		if result.Status != "open_elsewhere" && result.Status != "open_in_agents_window" {
+			break
+		}
+		time.Sleep(closeWait)
+		result = tuiHandoff(row, remoteOptions{})
+	}
+	return result
 }
 
 func (m model) remotePromptDialog(background string) string {

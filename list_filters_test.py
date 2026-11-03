@@ -81,6 +81,14 @@ class ListFiltersTest(unittest.TestCase):
         api, _ = self.project_fixture()
         self.assertEqual([r["id"] for r in self.rows("--project", str(api).upper())], ["in-api", "in-worktree"])
 
+    def test_project_matches_bare_repository_without_git_suffix(self):
+        source = self.repository("source")
+        bare = self.work / "billing.git"
+        self.git(self.work, "clone", "-q", "--bare", str(source), str(bare))
+        checkout = self.worktree(bare, "billing-main")
+        self.claude("in-bare-worktree", checkout)
+        self.assertEqual([r["id"] for r in self.rows("--project", "billing")], ["in-bare-worktree"])
+
     def test_title_does_not_match_project_directory(self):
         billing = self.work / "billing"
         billing.mkdir()

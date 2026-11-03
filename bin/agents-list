@@ -325,7 +325,8 @@ def attach_projects(rows):
 
 def project_matches(row, query):
     project = row["project"].lower()
-    return query.lower() in (project, Path(project).name)
+    name = Path(project).name
+    return query.lower() in (project, name, name.removesuffix(".git"))
 
 
 def last_message(row, home):

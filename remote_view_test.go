@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -98,6 +99,21 @@ func TestPhoneKeyOffersToCloseAgentsWindow(t *testing.T) {
 	m = run(m, cmd)
 	if closed != "@7" || len(*calls) != 2 || m.pendingRemote != nil {
 		t.Fatalf("closed %q calls %d", closed, len(*calls))
+	}
+}
+
+func TestClosingAgentsWindowWaitsForTheClientToExit(t *testing.T) {
+	calls := stubTUI(t, remoteResult{Status: "open_in_agents_window", Window: "@7"}, remoteResult{Status: "open_elsewhere"}, remoteResult{Status: "started"})
+	tuiClose = func(string) error { return nil }
+	old := closeWait
+	closeWait = time.Millisecond
+	t.Cleanup(func() { closeWait = old })
+	m, cmd := pressKey(fixtureModel(), "m")
+	m = run(m, cmd)
+	m, cmd = pressKey(m, "y")
+	m = run(m, cmd)
+	if len(*calls) != 3 || m.err != nil || !strings.Contains(m.notice, "Claude app") {
+		t.Fatalf("calls %d err %v notice %q", len(*calls), m.err, m.notice)
 	}
 }
 

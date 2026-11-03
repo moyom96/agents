@@ -22,7 +22,7 @@ func codexHandoff(row session) remoteResult {
 	}
 	rows, err := listProcesses()
 	if err != nil {
-		rows = nil
+		return newResult(row, "scan_failed")
 	}
 	table := newProcessTable(rows)
 	daemon := remoteControlDaemon(table)
@@ -54,7 +54,11 @@ func codexDaemonRunning() bool {
 
 func remoteControlDaemon(table processTable) int {
 	for _, proc := range table.rows {
-		if len(proc.Args) > 2 && filepath.Base(proc.Args[0]) == "codex" && proc.Args[1] == "app-server" && slices.Contains(proc.Args, "--remote-control") {
+		args := proc.Args
+		if len(args) > 1 && filepath.Base(args[0]) == "node" {
+			args = args[1:]
+		}
+		if len(args) > 2 && filepath.Base(args[0]) == "codex" && args[1] == "app-server" && slices.Contains(args, "--remote-control") {
 			return proc.PID
 		}
 	}

@@ -12,11 +12,11 @@ The computer has to stay on and awake. The phone is a window into the session; n
 
 ## One-time setup, at the computer
 
-1. Claude: sign in with a claude.ai account (`claude`, then `/login`), then run `claude --remote-control` once and accept the Remote Control confirmation. Remote Control does not work with an API key (`ANTHROPIC_API_KEY` or `apiKeyHelper`).
+1. Claude: sign in with a claude.ai account (`claude`, then `/login`), then run `claude --remote-control` once and accept the Remote Control confirmation. Remote Control does not work with `apiKeyHelper`; an `ANTHROPIC_API_KEY` is set aside for handed-off sessions so they use the claude.ai login.
 2. Codex: run `codex remote-control start`, then `codex remote-control pair` and enter the code in the ChatGPT app. Do the pairing here, never through a chat: the code grants control of this computer.
 3. Install tmux 3.2 or later.
 
-If Claude is configured with a custom API endpoint, such as a local compression proxy in `ANTHROPIC_BASE_URL`, `agents remote` starts handed-off sessions against api.anthropic.com instead and says so, because Remote Control only works there. The proxy's features are off for that session. A gateway token in `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_CUSTOM_HEADERS` is cleared for the session so it is never sent to Anthropic.
+If Claude is configured with a custom API endpoint, such as a local compression proxy in `ANTHROPIC_BASE_URL`, `agents remote` starts handed-off sessions against api.anthropic.com instead and says so, because Remote Control only works there. The proxy's features are off for that session. `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`, and `ANTHROPIC_API_KEY` are always cleared for handed-off sessions, even when only your shell profile sets them, so a gateway credential is never sent to Anthropic.
 
 ## Hand off before you leave
 
@@ -31,7 +31,7 @@ agents remote --stop <session-id>   # end one
 agents remote <session-id> --json   # for scripts and agents
 ```
 
-If the session is still open in a terminal, `agents remote` refuses, because two Claude processes on one session diverge. Inside that open session, `/rc` continues it on the phone directly. If a plain `claude` is running in the same project, the command cannot tell whether it is the same session; close it and pass `--confirm-closed`. For Codex the command warns instead, since the daemon keeps one history.
+If the session is still open in a terminal, `agents remote` refuses, because two Claude processes on one session diverge. This includes asking a Claude session to hand off itself. Inside that open session, `/rc` continues it on the phone directly. If the process list can't be read, the command refuses too rather than guess. If a plain `claude` is running in the same project, the command cannot tell whether it is the same session; close it and pass `--confirm-closed`. For Codex the command warns instead, since the daemon keeps one history.
 
 ## Hand off after you leave: the bridge
 
@@ -71,6 +71,8 @@ On Linux, keep the computer awake yourself.
 
 ## Statuses
 
-`agents remote --json` prints `status`, `message`, `app`, `look_for`, and `notices`. Exit code 0 means you can continue on the phone (`started`, `already_remote`, `ready`, `ready_warning`). Exit 3 is `unconfirmed`: Claude started but Remote Control did not confirm in time, so check the app or stop it. Exit 2 is a bad ID or an unsupported client, exit 4 means the session is or may be open elsewhere, and exit 5 means a prerequisite is missing; the message says what to do.
+`agents remote --json` prints `status`, `message`, `app`, `look_for`, and `notices`. Exit code 0 means you can continue on the phone (`started`, `already_remote`, `ready`, `ready_warning`). Exit 3 is `unconfirmed`: Claude started but Remote Control did not confirm in time, so check the app or stop it. Exit 2 is bad usage (`usage_error` with `--json`), a bad ID, or an unsupported client, exit 4 means the session is or may be open elsewhere, and exit 5 means a prerequisite is missing or a check failed (`index_unavailable`, `scan_failed`, `busy`); the message says what to do. `agents remote --help` prints the same summary.
+
+Remote sessions live on the default tmux server. If the browser runs on another server (`tmux -L` or `-S`), Enter can't attach; use `tmux attach -t agents-remote` instead.
 
 Each handoff and stop is logged without message content in `~/.local/state/agents/remote.log` (or `$XDG_STATE_HOME/agents/remote.log`).

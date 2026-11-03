@@ -396,11 +396,15 @@ func (m *model) navigate(key string) {
 
 func main() {
 	if len(os.Args) > 1 {
+		if os.Args[1] == "-h" || os.Args[1] == "--help" {
+			fmt.Println("usage: agents\n" + remoteUsage)
+			return
+		}
 		if os.Args[1] != "remote" {
 			fmt.Fprintln(os.Stderr, "usage: agents\n"+remoteUsage)
 			os.Exit(2)
 		}
-		os.Exit(runRemote(os.Args[2:], os.Stdout))
+		os.Exit(runRemote(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if _, err := tea.NewProgram(newModel()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "agents:", err)

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -15,7 +17,9 @@ type process struct {
 }
 
 var listProcesses = func() ([]process, error) {
-	output, err := exec.Command("ps", "-axo", "pid=,ppid=,args=").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,args=").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +43,9 @@ var processCwd = func(pid int) string {
 		path, _ := os.Readlink("/proc/" + strconv.Itoa(pid) + "/cwd")
 		return path
 	}
-	output, err := exec.Command("lsof", "-a", "-d", "cwd", "-p", strconv.Itoa(pid), "-Fn").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "lsof", "-a", "-d", "cwd", "-p", strconv.Itoa(pid), "-Fn").Output()
 	if err != nil {
 		return ""
 	}
@@ -113,10 +119,7 @@ func clientProcess(args []string, client string) bool {
 	if program == "node" && len(args) > 1 {
 		program = filepath.Base(args[1])
 	}
-	if program != client || len(args) > 1 && (args[1] == "remote-control" || args[1] == "app-server") {
-		return false
-	}
-	return !strings.Contains(strings.Join(args, " "), "app-server")
+	return program == client && !slices.Contains(args, "remote-control") && !slices.Contains(args, "app-server")
 }
 
 type openState struct {
@@ -128,7 +131,7 @@ func findOpenSession(row session, table processTable, exclude map[int]bool) open
 	self := table.ancestorsOf(os.Getpid())
 	var state openState
 	for _, proc := range table.rows {
-		if self[proc.PID] || table.descendsFrom(proc.PID, exclude) {
+		if self[proc.PID] && !clientProcess(proc.Args, row.Client) || table.descendsFrom(proc.PID, exclude) {
 			continue
 		}
 		id, resumed := resumedSession(proc.Args)

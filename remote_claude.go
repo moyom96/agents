@@ -24,10 +24,13 @@ var (
 	nestedAgentEnv = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "TMUX", "TMUX_PANE"}
 )
 
-const endpointNotice = "Your custom Claude API endpoint is bypassed for this session, so features it adds (such as a compression proxy) are off."
+const (
+	endpointNotice = "Your custom Claude API endpoint is bypassed for this session, so features it adds (such as a compression proxy) are off."
+	apiKeyNotice   = "Your ANTHROPIC_API_KEY is not used for this session; Remote Control signs in with your claude.ai account."
+)
 
 type claudeAuth struct {
-	customEndpoint, apiKey, gatewayAuth bool
+	customEndpoint, apiKey, keyHelper bool
 }
 
 type claudeSettings struct {
@@ -43,7 +46,7 @@ func claudeConfig(cwd string) claudeAuth {
 		}
 	}
 	env := map[string]string{}
-	for _, name := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"} {
+	for _, name := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"} {
 		env[name] = os.Getenv(name)
 	}
 	helper := false
@@ -61,8 +64,8 @@ func claudeConfig(cwd string) claudeAuth {
 	}
 	return claudeAuth{
 		customEndpoint: env["ANTHROPIC_BASE_URL"] != "" && endpointHost(env["ANTHROPIC_BASE_URL"]) != "api.anthropic.com",
-		apiKey:         env["ANTHROPIC_API_KEY"] != "" || helper,
-		gatewayAuth:    env["ANTHROPIC_AUTH_TOKEN"] != "" || env["ANTHROPIC_CUSTOM_HEADERS"] != "",
+		apiKey:         env["ANTHROPIC_API_KEY"] != "",
+		keyHelper:      helper,
 	}
 }
 
@@ -74,11 +77,10 @@ func endpointHost(value string) string {
 	return parsed.Hostname()
 }
 
-func endpointOverride(auth claudeAuth) string {
-	env := map[string]string{"ANTHROPIC_BASE_URL": officialEndpoint}
-	if auth.gatewayAuth {
-		env["ANTHROPIC_AUTH_TOKEN"], env["ANTHROPIC_CUSTOM_HEADERS"] = "", ""
-	}
+// Credentials are blanked unconditionally because the shell profile in the
+// tmux window can export them even when this process can't see them.
+func endpointOverride() string {
+	env := map[string]string{"ANTHROPIC_BASE_URL": officialEndpoint, "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_CUSTOM_HEADERS": "", "ANTHROPIC_API_KEY": ""}
 	data, _ := json.Marshal(map[string]any{"env": env})
 	return string(data)
 }
@@ -105,16 +107,20 @@ func shortID(id string) string {
 	return id
 }
 
-func claudePayload(row session, name, override, shell string, awake bool) []string {
+func claudePayload(row session, name, shell string, awake bool) []string {
+	command := []string{"claude", "--settings", endpointOverride(), "--resume", row.ID, "--remote-control", name}
+	if awake {
+		command = append([]string{"caffeinate", "-i"}, command...)
+	}
+	quoted := make([]string, len(command))
+	for i, arg := range command {
+		quoted[i] = quote(arg)
+	}
 	payload := []string{"/usr/bin/env"}
 	for _, variable := range nestedAgentEnv {
 		payload = append(payload, "-u", variable)
 	}
-	payload = append(payload, shell, "-lic", `exec "$@"`, remoteSession)
-	if awake {
-		payload = append(payload, "caffeinate", "-i")
-	}
-	return append(payload, "claude", "--settings", override, "--resume", row.ID, "--remote-control", name)
+	return append(payload, shell, "-lic", "exec "+strings.Join(quoted, " "))
 }
 
 func claudeHandoff(row session, options remoteOptions) remoteResult {
@@ -122,29 +128,38 @@ func claudeHandoff(row session, options remoteOptions) remoteResult {
 		return newResult(row, failure)
 	}
 	auth := claudeConfig(row.Cwd)
-	if auth.apiKey {
+	if auth.keyHelper {
 		return newResult(row, "api_key_auth")
 	}
-	unlock, err := lockRemote()
-	if err != nil {
-		return newResult(row, "tmux_failed")
-	}
-	window, status := claudeWindow(row, options, auth)
-	unlock()
+	unlock, status := lockRemote()
 	if status != "" {
-		result := newResult(row, status)
-		result.Window = window
-		return result
+		return newResult(row, status)
 	}
-	result := newResult(row, waitForRemoteControl(window))
-	if result.Status == "started" || result.Status == "unconfirmed" {
+	defer unlock()
+	window, status := claudeWindow(row, options)
+	if status == "" {
+		status = waitForRemoteControl(window)
+	}
+	result := newResult(row, status)
+	result.Window = window
+	switch status {
+	case "started", "unconfirmed", "already_remote":
 		result.App, result.LookFor, result.EndpointOverridden = "Claude app → Code", remoteName(row), auth.customEndpoint
 		if auth.customEndpoint {
 			result.Notices = append(result.Notices, endpointNotice)
 		}
-		logRemote(result)
-	} else {
-		tmux("kill-window", "-t", window)
+		if auth.apiKey {
+			result.Notices = append(result.Notices, apiKeyNotice)
+		}
+		if status != "already_remote" {
+			logRemote(result)
+		}
+	case "open_in_agents_window":
+	default:
+		if window != "" {
+			tmux("kill-window", "-t", window)
+		}
+		result.Window = ""
 	}
 	return result
 }
@@ -162,10 +177,10 @@ func claudePreflight(row session) string {
 	return ""
 }
 
-func claudeWindow(row session, options remoteOptions, auth claudeAuth) (string, string) {
-	key := row.Client + ":" + row.ID
+func claudeWindow(row session, options remoteOptions) (string, string) {
+	key := sessionKey(row)
 	if window, found := remoteWindowFor(key); found {
-		return window.ID, "already_remote"
+		return window.ID, existingWindowStatus(window.ID)
 	}
 	if window, status := openElsewhere(row, key, options); status != "" {
 		return window, status
@@ -175,22 +190,33 @@ func claudeWindow(row session, options remoteOptions, auth claudeAuth) (string, 
 		shell = "/bin/sh"
 	}
 	name := remoteName(row)
-	window, err := createRemoteWindow(name, row.Cwd, claudePayload(row, name, endpointOverride(auth), shell, keepAwake()))
+	window, err := createRemoteWindow(name, row.Cwd, claudePayload(row, name, shell, keepAwake()))
 	if err != nil {
 		return "", "tmux_failed"
 	}
-	tagWindow(window, "remain-on-exit", "on")
-	if err := tagWindow(window, "@agents-remote", key); err != nil {
+	if err := setWindowOption(window, "@agents-remote", key); err != nil {
 		tmux("kill-window", "-t", window)
 		return "", "tmux_failed"
 	}
 	return window, ""
 }
 
+func existingWindowStatus(window string) string {
+	text, _ := tmux("capture-pane", "-p", "-J", "-t", window)
+	status := classifyPane(text)
+	if status == "" {
+		status = waitForRemoteControl(window)
+	}
+	if status == "started" {
+		return "already_remote"
+	}
+	return status
+}
+
 func openElsewhere(row session, key string, options remoteOptions) (string, string) {
 	rows, err := listProcesses()
 	if err != nil {
-		return "", ""
+		return "", "scan_failed"
 	}
 	table := newProcessTable(rows)
 	exclude := map[int]bool{}
@@ -223,14 +249,25 @@ var startupSignals = []struct{ status, prefix string }{
 	{"started", "/remote-control is active"},
 }
 
+const signalLines = 12
+
+// Only the header and the newest lines are trusted: the middle of the pane is
+// the replayed transcript, which can contain any of these strings.
 func classifyPane(text string) string {
+	var lines []string
 	for line := range strings.SplitSeq(text, "\n") {
-		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "⚠"))
+		if line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "⚠")); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	for _, line := range lines[max(0, len(lines)-signalLines):] {
 		for _, signal := range startupSignals {
 			if strings.HasPrefix(line, signal.prefix) {
 				return signal.status
 			}
 		}
+	}
+	for _, line := range lines[:min(len(lines), 4)] {
 		if strings.HasSuffix(line, "· /rc active") {
 			return "started"
 		}

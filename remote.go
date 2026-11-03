@@ -42,13 +42,17 @@ var remoteStatuses = map[string]struct {
 	"ambiguous_session":          {2, "This ID matches sessions in more than one client."},
 	"unsupported_client":         {2, "No mobile app can drive local OpenCode or Cursor sessions."},
 	"not_remote":                 {2, "This session is not running remotely."},
+	"usage_error":                {2, remoteUsage},
 	"open_in_agents_window":      {4, "This session is open in a tmux window that agents opened. Close that window first."},
 	"open_elsewhere":             {4, "This session is open in another terminal. Run /rc inside it to continue on your phone, or close it first."},
 	"maybe_open":                 {4, "A Claude session is running in this project and may be this one. Run /rc inside it to continue on your phone, or close it and retry with --confirm-closed."},
 	"consent_required":           {5, "Remote Control needs a one-time confirmation. At the laptop, run `claude --remote-control` once and accept it."},
 	"login_required":             {5, "Claude is not signed in to claude.ai. At the laptop, run `claude` and use /login."},
 	"trust_required":             {5, "Claude has not trusted this folder yet. At the laptop, open Claude there once and accept the trust prompt."},
-	"api_key_auth":               {5, "Remote Control needs a claude.ai login, but Claude is configured to use an API key (ANTHROPIC_API_KEY or apiKeyHelper)."},
+	"api_key_auth":               {5, "Remote Control needs a claude.ai login, but Claude is configured to get its API key from apiKeyHelper."},
+	"index_unavailable":          {5, "Could not read saved sessions. Run `agents-list` to see the error."},
+	"scan_failed":                {5, "Could not check whether this session is open elsewhere, so it was not handed off."},
+	"busy":                       {5, "Another handoff is still starting. Try again in a moment."},
 	"remote_control_unavailable": {5, "Claude reported that Remote Control is unavailable for this setup."},
 	"startup_failed":             {5, "Claude exited during startup."},
 	"daemon_not_running":         {5, "The Codex remote-control daemon is not running. At the laptop, run `codex remote-control start`, and pair once with `codex remote-control pair`."},
@@ -88,7 +92,7 @@ func handoff(row session, options remoteOptions) remoteResult {
 }
 
 func stopRemote(row session) remoteResult {
-	window, found := remoteWindowFor(row.Client + ":" + row.ID)
+	window, found := remoteWindowFor(sessionKey(row))
 	if !found {
 		return newResult(row, "not_remote")
 	}
@@ -100,56 +104,100 @@ func stopRemote(row session) remoteResult {
 	return result
 }
 
-func runRemote(args []string, stdout io.Writer) int {
-	var asJSON, list, stop, confirmClosed bool
-	var id string
+type remoteCommand struct {
+	asJSON, list, stop, confirmClosed, help bool
+	id                                      string
+}
+
+func parseRemote(args []string) (remoteCommand, bool) {
+	var command remoteCommand
 	for _, arg := range args {
 		switch arg {
 		case "--json":
-			asJSON = true
+			command.asJSON = true
 		case "--list":
-			list = true
+			command.list = true
 		case "--stop":
-			stop = true
+			command.stop = true
 		case "--confirm-closed":
-			confirmClosed = true
+			command.confirmClosed = true
+		case "-h", "--help":
+			command.help = true
 		default:
-			if strings.HasPrefix(arg, "-") || id != "" {
-				fmt.Fprintln(stdout, remoteUsage)
-				return 2
+			if strings.HasPrefix(arg, "-") || command.id != "" {
+				return command, false
 			}
-			id = arg
+			command.id = arg
 		}
 	}
-	if list {
-		return printRemoteList(stdout, asJSON)
+	if command.help {
+		return command, true
 	}
-	if id == "" {
-		fmt.Fprintln(stdout, remoteUsage)
+	if command.list {
+		return command, command.id == "" && !command.stop && !command.confirmClosed
+	}
+	return command, command.id != "" && !(command.stop && command.confirmClosed)
+}
+
+func runRemote(args []string, stdout, stderr io.Writer) int {
+	command, valid := parseRemote(args)
+	switch {
+	case command.help:
+		fmt.Fprintln(stdout, remoteUsage+"\n\n"+remoteHelp)
+		return 0
+	case !valid && command.asJSON:
+		printRemote(stdout, remoteResult{Status: "usage_error", Message: remoteUsage}, true)
 		return 2
+	case !valid:
+		fmt.Fprintln(stderr, remoteUsage)
+		return 2
+	case command.list:
+		return printRemoteList(stdout, command.asJSON)
 	}
-	row, result := findSession(id)
-	if result.Status == "" {
-		if stop {
-			result = stopRemote(row)
-		} else {
-			result = handoff(row, remoteOptions{ConfirmClosed: confirmClosed})
+	row, result := findSession(command.id)
+	switch {
+	case command.stop && result.Status != "":
+		result = stopByID(command.id, result)
+	case command.stop:
+		result = stopRemote(row)
+	case result.Status == "":
+		result = handoff(row, remoteOptions{ConfirmClosed: command.confirmClosed})
+	}
+	printRemote(stdout, result, command.asJSON)
+	return remoteStatuses[result.Status].exit
+}
+
+func stopByID(id string, lookup remoteResult) remoteResult {
+	for _, window := range liveRemoteWindows() {
+		if client, windowID, _ := strings.Cut(window.Key, ":"); windowID == id {
+			return stopRemote(session{Client: client, ID: id})
 		}
 	}
-	printRemote(stdout, result, asJSON)
-	return remoteStatuses[result.Status].exit
+	return lookup
 }
 
 const remoteUsage = "usage: agents remote <session-id> [--json] [--confirm-closed]\n       agents remote --stop <session-id> [--json]\n       agents remote --list [--json]"
 
+const remoteHelp = `Continue a saved Claude Code or Codex session from its phone app.
+
+--json prints status, message, app, look_for, notices, and window.
+--confirm-closed hands off even though a Claude session runs in the same
+project; pass it only when that session is closed or is a different one.
+
+Exit codes: 0 continue on the phone (started, already_remote, ready,
+ready_warning, stopped); 2 bad usage, unknown or unsupported session;
+3 unconfirmed; 4 open elsewhere; 5 a prerequisite is missing.
+See docs/mobile-handoff.md.`
+
 func findSession(id string) (session, remoteResult) {
 	rows, err := loadIndex()
+	if err != nil {
+		return session{}, remoteResult{ID: id, Status: "index_unavailable", Message: remoteStatuses["index_unavailable"].message}
+	}
 	var matches []session
-	if err == nil {
-		for _, row := range rows {
-			if row.ID == id {
-				matches = append(matches, row)
-			}
+	for _, row := range rows {
+		if row.ID == id {
+			matches = append(matches, row)
 		}
 	}
 	switch len(matches) {
@@ -204,12 +252,12 @@ func remoteListings() []remoteListing {
 	titles := map[string]string{}
 	if rows, err := loadIndex(); err == nil {
 		for _, row := range rows {
-			titles[row.Client+":"+row.ID] = limit(row.name(), 120)
+			titles[sessionKey(row)] = limit(row.name(), 120)
 		}
 	}
 	listings := windowListings()
 	for i := range listings {
-		listings[i].Title = titles[listings[i].Client+":"+listings[i].ID]
+		listings[i].Title = titles[sessionKey(session{Client: listings[i].Client, ID: listings[i].ID})]
 	}
 	return listings
 }
@@ -243,23 +291,29 @@ func stateDir() (string, error) {
 	return dir, os.MkdirAll(dir, 0o700)
 }
 
-func lockRemote() (func(), error) {
+var lockTimeout = 45 * time.Second
+
+func lockRemote() (func(), string) {
 	dir, err := stateDir()
 	if err != nil {
-		return nil, err
+		return nil, "tmux_failed"
 	}
 	file, err := os.OpenFile(filepath.Join(dir, "remote.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, "tmux_failed"
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		file.Close()
-		return nil, err
+	deadline := time.Now().Add(lockTimeout)
+	for syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		if time.Now().After(deadline) {
+			file.Close()
+			return nil, "busy"
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	return func() {
 		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		file.Close()
-	}, nil
+	}, ""
 }
 
 const remoteLogLimit = 1 << 20

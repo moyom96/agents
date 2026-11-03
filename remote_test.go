@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 )
 
 const fakeClaude = `#!/bin/sh
+[ -n "$ARGS_FILE" ] && printf '%s\n' "$@" > "$ARGS_FILE"
 case "$FAKE_MODE" in
 connected) printf '\n  /remote-control is active · Continue here, on your phone\n'; exec sleep 30 ;;
 consent) printf 'Enable Remote Control? (y/n)\n'; exec sleep 30 ;;
@@ -36,12 +39,16 @@ func remoteFixture(t *testing.T, mode string) session {
 	remoteTmuxSocket = socket
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_MODE", mode)
-	if err := os.WriteFile(filepath.Join(bin, "login-shell"), []byte("#!/bin/sh\nshift 3\nexec \"$@\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "login-shell"), []byte("#!/bin/sh\nexec /bin/sh -c \"$2\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SHELL", filepath.Join(bin, "login-shell"))
+	t.Setenv("ARGS_FILE", filepath.Join(bin, "args"))
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	for _, name := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"} {
+		t.Setenv(name, "")
+	}
 	stubRemote(t, nil)
 	startupTimeout, startupPoll = 3*time.Second, 100*time.Millisecond
 	return session{Client: "claude", ID: "4895e5d4-test", Title: "Billing fix", Cwd: project}
@@ -87,34 +94,28 @@ func TestRemoteNameIsSafeAndBounded(t *testing.T) {
 	}
 }
 
-func TestClaudePayloadPassesArgumentsSeparately(t *testing.T) {
+func TestClaudePayloadQuotesOneCommandForAnyLoginShell(t *testing.T) {
 	row := session{ID: "id-1", Cwd: "/work/api"}
-	payload := claudePayload(row, "claude · api · x", `{"env":{}}`, "/bin/zsh", true)
+	payload := claudePayload(row, "claude · it's x", "/usr/bin/fish", true)
 	joined := strings.Join(payload, "\x00")
-	for _, want := range []string{"-u\x00CLAUDECODE", "-u\x00TMUX", "/bin/zsh\x00-lic\x00exec \"$@\"\x00agents-remote\x00caffeinate\x00-i\x00claude",
-		"--settings\x00{\"env\":{}}", "--resume\x00id-1", "--remote-control\x00claude · api · x"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("payload missing %q: %q", want, payload)
+	if !strings.Contains(joined, "-u\x00CLAUDECODE") || !strings.Contains(joined, "-u\x00TMUX") || payload[len(payload)-3] != "/usr/bin/fish" || payload[len(payload)-2] != "-lic" {
+		t.Fatalf("payload: %q", payload)
+	}
+	command := payload[len(payload)-1]
+	for _, want := range []string{"exec 'caffeinate' '-i' 'claude' '--settings' '{", "'--resume' 'id-1'", `'--remote-control' 'claude · it'"'"'s x'`} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("command missing %q: %s", want, command)
 		}
 	}
-	if slicesContain(claudePayload(row, "n", "{}", "/bin/sh", false), "caffeinate") {
+	if strings.Contains(claudePayload(row, "n", "/bin/sh", false)[len(payload)-1], "caffeinate") {
 		t.Fatal("caffeinate added without keep-awake")
 	}
 }
 
-func slicesContain(values []string, value string) bool {
-	for _, item := range values {
-		if item == value {
-			return true
-		}
-	}
-	return false
-}
-
-func TestClaudeConfigDetectsEndpointKeysAndGatewayAuth(t *testing.T) {
+func TestClaudeConfigDetectsEndpointAndKeys(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	for _, name := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"} {
+	for _, name := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"} {
 		t.Setenv(name, "")
 	}
 	if auth := claudeConfig(project); auth != (claudeAuth{}) {
@@ -126,21 +127,22 @@ func TestClaudeConfigDetectsEndpointKeysAndGatewayAuth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(home, "settings.json"), `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787","ANTHROPIC_AUTH_TOKEN":"x"}}`)
-	auth := claudeConfig(project)
-	if !auth.customEndpoint || !auth.gatewayAuth || auth.apiKey {
+	write(filepath.Join(home, "settings.json"), `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787","ANTHROPIC_API_KEY":"x"}}`)
+	if auth := claudeConfig(project); !auth.customEndpoint || !auth.apiKey || auth.keyHelper {
 		t.Fatalf("proxy settings: %+v", auth)
 	}
-	override := endpointOverride(auth)
-	if !strings.Contains(override, `"ANTHROPIC_BASE_URL":"https://api.anthropic.com"`) || !strings.Contains(override, `"ANTHROPIC_AUTH_TOKEN":""`) {
-		t.Fatalf("override: %s", override)
+	override := endpointOverride()
+	for _, want := range []string{`"ANTHROPIC_BASE_URL":"https://api.anthropic.com"`, `"ANTHROPIC_AUTH_TOKEN":""`, `"ANTHROPIC_CUSTOM_HEADERS":""`, `"ANTHROPIC_API_KEY":""`} {
+		if !strings.Contains(override, want) {
+			t.Fatalf("override missing %s: %s", want, override)
+		}
 	}
 	write(filepath.Join(home, "settings.json"), `{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}`)
 	if claudeConfig(project).customEndpoint {
 		t.Fatal("official endpoint reported as custom")
 	}
 	write(filepath.Join(project, ".claude", "settings.local.json"), `{"apiKeyHelper":"/bin/key"}`)
-	if !claudeConfig(project).apiKey {
+	if !claudeConfig(project).keyHelper {
 		t.Fatal("apiKeyHelper not detected")
 	}
 }
@@ -151,6 +153,8 @@ func TestClassifyPaneIgnoresTranscriptText(t *testing.T) {
 		"  /remote-control is active · Continue here":              "started",
 		"Enable Remote Control? (y/n)":                             "consent_required",
 		"⚠ Remote Control failed: not available":                   "remote_control_unavailable",
+		"Not logged in · Please run /login":                        "login_required",
+		"Do you trust the files in this folder?":                   "trust_required",
 		"⚠ Your login expires in 3 days · run /login to renew":     "",
 		"  ⎿  /remote-control is active · quoted in a tool result": "",
 		"> Enable Remote Control? is what the docs say":            "",
@@ -158,6 +162,18 @@ func TestClassifyPaneIgnoresTranscriptText(t *testing.T) {
 	for text, want := range cases {
 		if got := classifyPane(text); got != want {
 			t.Errorf("classifyPane(%q) = %q, want %q", text, got, want)
+		}
+	}
+	replayed := "header\nfolder\nmodel\nuser said\nNot logged in\n/remote-control is active · old\n" + strings.Repeat("transcript line\n", signalLines)
+	if got := classifyPane(replayed); got != "" {
+		t.Fatalf("replayed transcript text produced %q", got)
+	}
+}
+
+func TestTmuxVersionSupport(t *testing.T) {
+	for version, want := range map[string]bool{"tmux 3.1c": false, "tmux 3.2": true, "tmux 3.2a": true, "tmux 3.8": true, "tmux next-3.4": true, "tmux 2.9": false, "garbage": false} {
+		if got := tmuxVersionSupported(version); got != want {
+			t.Errorf("%q: got %v", version, got)
 		}
 	}
 }
@@ -187,6 +203,10 @@ func TestFindOpenSessionMatchesResumeArgvAndSameCwd(t *testing.T) {
 	if state := findOpenSession(row, table, nil); !state.sameCwd {
 		t.Fatal("plain claude in the project not flagged")
 	}
+	table = newProcessTable([]process{{PID: 905, PPID: 1, Args: []string{"claude", "--resume", "id-1"}}, {PID: self, PPID: 905, Args: []string{"agents", "remote", "id-1"}}})
+	if state := findOpenSession(row, table, nil); state.resumedPID != 905 {
+		t.Fatal("handing off the session that runs this command was not refused")
+	}
 }
 
 func TestClaudeHandoffStartsOnceAndStops(t *testing.T) {
@@ -195,8 +215,17 @@ func TestClaudeHandoffStartsOnceAndStops(t *testing.T) {
 	if result.Status != "started" || result.App == "" || result.LookFor != "claude · "+filepath.Base(row.Cwd)+" · Billing fix" {
 		t.Fatalf("handoff: %+v", result)
 	}
-	if again := handoff(row, remoteOptions{}); again.Status != "already_remote" {
+	if again := handoff(row, remoteOptions{}); again.Status != "already_remote" || again.LookFor != result.LookFor || again.App != result.App {
 		t.Fatalf("second handoff: %+v", again)
+	}
+	args, err := os.ReadFile(os.Getenv("ARGS_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Split(strings.TrimSpace(string(args)), "\n")
+	want := []string{"--settings", endpointOverride(), "--resume", row.ID, "--remote-control", result.LookFor}
+	if strings.Join(argv, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("claude received %q, want %q", argv, want)
 	}
 	if windows := liveRemoteWindows(); len(windows) != 1 || windows[0].Key != "claude:"+row.ID {
 		t.Fatalf("windows: %+v", windows)
@@ -239,6 +268,74 @@ func TestClaudeHandoffKeepsUnconfirmedWindow(t *testing.T) {
 	if result := handoff(row, remoteOptions{}); result.Status != "unconfirmed" || len(liveRemoteWindows()) != 1 {
 		t.Fatalf("handoff: %+v", result)
 	}
+	if retry := handoff(row, remoteOptions{}); retry.Status != "unconfirmed" {
+		t.Fatalf("retry reported %q for a window that never connected", retry.Status)
+	}
+}
+
+func TestClaudeHandoffNotesBypassedEndpointAndKey(t *testing.T) {
+	row := remoteFixture(t, "connected")
+	settings := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787","ANTHROPIC_API_KEY":"x"},"permissions":{"defaultMode":"bypassPermissions"}}`
+	if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := handoff(row, remoteOptions{})
+	if result.Status != "started" || !result.EndpointOverridden || len(result.Notices) != 2 {
+		t.Fatalf("handoff: %+v", result)
+	}
+	if lines := logLines(t); len(lines) != 1 || lines[0]["endpoint_overridden"] != true {
+		t.Fatalf("log: %v", lines)
+	}
+	args, _ := os.ReadFile(os.Getenv("ARGS_FILE"))
+	if strings.Contains(string(args), "--permission-mode") {
+		t.Fatal("the user's permission mode was changed")
+	}
+}
+
+func TestClaudeHandoffRefusesKeyHelperAndMissingPrerequisites(t *testing.T) {
+	row := remoteFixture(t, "connected")
+	if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "settings.json"), []byte(`{"apiKeyHelper":"/bin/key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result := handoff(row, remoteOptions{}); result.Status != "api_key_auth" || len(liveRemoteWindows()) != 0 || len(logLines(t)) != 0 {
+		t.Fatalf("key helper: %+v", result)
+	}
+	missing := row
+	missing.Cwd = filepath.Join(row.Cwd, "gone")
+	if result := handoff(missing, remoteOptions{}); result.Status != "directory_missing" {
+		t.Fatalf("missing directory: %+v", result)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if result := handoff(row, remoteOptions{}); result.Status != "client_missing" {
+		t.Fatalf("missing client: %+v", result)
+	}
+}
+
+func TestClaudeHandoffRefusesSessionsOpenElsewhere(t *testing.T) {
+	row := remoteFixture(t, "connected")
+	listProcesses = func() ([]process, error) {
+		return []process{{PID: 906, PPID: 1, Args: []string{"claude", "--resume", row.ID}}}, nil
+	}
+	if result := handoff(row, remoteOptions{ConfirmClosed: true}); result.Status != "open_elsewhere" || len(liveRemoteWindows()) != 0 {
+		t.Fatalf("open elsewhere: %+v", result)
+	}
+	window, err := tmux("new-session", "-d", "-P", "-F", "#{window_id}", "-s", "browser", "--", "sleep", "30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setWindowOption(window, "@agents-local", sessionKey(row))
+	pane, _ := tmux("display-message", "-p", "-t", window, "#{pane_pid}")
+	panePID, _ := strconv.Atoi(pane)
+	listProcesses = func() ([]process, error) {
+		return []process{{PID: panePID, PPID: 1, Args: []string{"sh"}}, {PID: 907, PPID: panePID, Args: []string{"claude", "--resume", row.ID}}}, nil
+	}
+	if result := handoff(row, remoteOptions{}); result.Status != "open_in_agents_window" || result.Window != window {
+		t.Fatalf("agents window: %+v", result)
+	}
+	listProcesses = func() ([]process, error) { return nil, fmt.Errorf("ps failed") }
+	if result := handoff(row, remoteOptions{}); result.Status != "scan_failed" || len(liveRemoteWindows()) != 0 {
+		t.Fatalf("scan failure: %+v", result)
+	}
 }
 
 func TestClaudeHandoffRefusesPossiblyOpenSession(t *testing.T) {
@@ -261,8 +358,37 @@ func TestConcurrentClaudeHandoffsCreateOneWindow(t *testing.T) {
 		wg.Go(func() { statuses[i] = handoff(row, remoteOptions{}).Status })
 	}
 	wg.Wait()
-	if len(liveRemoteWindows()) != 1 {
-		t.Fatalf("windows after concurrent handoffs: %v %v", statuses, liveRemoteWindows())
+	if len(liveRemoteWindows()) != 1 || !slices.Contains(statuses, "started") || !slices.Contains(statuses, "already_remote") {
+		t.Fatalf("concurrent handoffs: %v %v", statuses, liveRemoteWindows())
+	}
+}
+
+func TestRemoteListAndStopFromTheCommandLine(t *testing.T) {
+	row := remoteFixture(t, "connected")
+	loadIndex = func() ([]session, error) { return []session{row}, nil }
+	if result := handoff(row, remoteOptions{}); result.Status != "started" {
+		t.Fatalf("handoff: %+v", result)
+	}
+	tmux("new-window", "-d", "-t", "="+remoteSession+":", "--", "sleep", "30")
+	dead, _ := tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "="+remoteSession+":", "--", "true")
+	setWindowOption(dead, "@agents-remote", "claude:dead")
+	time.Sleep(300 * time.Millisecond)
+	var out bytes.Buffer
+	if code := runRemote([]string{"--list", "--json"}, &out, &out); code != 0 {
+		t.Fatalf("list exit %d: %s", code, out.String())
+	}
+	var listings []remoteListing
+	if err := json.Unmarshal(out.Bytes(), &listings); err != nil || len(listings) != 1 || listings[0].ID != row.ID || listings[0].Title != "Billing fix" {
+		t.Fatalf("listings: %v %s", err, out.String())
+	}
+	loadIndex = func() ([]session, error) { return nil, nil }
+	out.Reset()
+	if code := runRemote([]string{row.ID, "--stop", "--json"}, &out, &out); code != 0 || !strings.Contains(out.String(), `"stopped"`) {
+		t.Fatalf("stop of an unindexed remote session: %d %s", code, out.String())
+	}
+	out.Reset()
+	if code := runRemote([]string{row.ID, "--stop", "--json"}, &out, &out); code != 2 {
+		t.Fatalf("second stop: %d %s", code, out.String())
 	}
 }
 
@@ -271,12 +397,33 @@ func TestRemoteCommandContract(t *testing.T) {
 	loadIndex = func() ([]session, error) {
 		return []session{{Client: "opencode", ID: "ses_1", Title: "Notes"}, {Client: "claude", ID: "dup"}, {Client: "codex", ID: "dup"}}, nil
 	}
+	var stderr bytes.Buffer
 	run := func(args ...string) (int, map[string]any) {
 		var out bytes.Buffer
-		code := runRemote(args, &out)
+		stderr.Reset()
+		code := runRemote(args, &out, &stderr)
 		var result map[string]any
 		json.Unmarshal(out.Bytes(), &result)
 		return code, result
+	}
+	if code, result := run("id", "--json", "--bogus"); code != 2 || result["status"] != "usage_error" {
+		t.Fatalf("JSON usage error: %d %v", code, result)
+	}
+	for _, args := range [][]string{{"--list", "id"}, {"--list", "--stop"}, {"id", "--stop", "--confirm-closed"}} {
+		if code, _ := run(args...); code != 2 || !strings.Contains(stderr.String(), "usage:") {
+			t.Fatalf("conflicting flags accepted: %v", args)
+		}
+	}
+	var help bytes.Buffer
+	if code := runRemote([]string{"--help"}, &help, &stderr); code != 0 || !strings.Contains(help.String(), "Exit codes") {
+		t.Fatalf("help: %d %s", code, help.String())
+	}
+	loadIndex = func() ([]session, error) { return nil, fmt.Errorf("agents-list failed") }
+	if code, result := run("ses_1", "--json"); code != 5 || result["status"] != "index_unavailable" {
+		t.Fatalf("index failure: %d %v", code, result)
+	}
+	loadIndex = func() ([]session, error) {
+		return []session{{Client: "opencode", ID: "ses_1", Title: "Notes"}, {Client: "claude", ID: "dup"}, {Client: "codex", ID: "dup"}}, nil
 	}
 	if code, result := run("missing", "--json"); code != 2 || result["status"] != "unknown_session" {
 		t.Fatalf("unknown: %d %v", code, result)
