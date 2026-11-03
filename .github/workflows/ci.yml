@@ -21,6 +21,10 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - if: runner.os == 'macOS'
+        run: brew list tmux || brew install tmux
       - run: go test ./...
       - run: go vet ./...
       - run: go build -trimpath -o agents .

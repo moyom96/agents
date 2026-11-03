@@ -36,7 +36,10 @@ func remoteFixture(t *testing.T, mode string) session {
 	remoteTmuxSocket = socket
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_MODE", mode)
-	t.Setenv("SHELL", "/bin/sh")
+	if err := os.WriteFile(filepath.Join(bin, "login-shell"), []byte("#!/bin/sh\nshift 3\nexec \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", filepath.Join(bin, "login-shell"))
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	stubRemote(t, nil)

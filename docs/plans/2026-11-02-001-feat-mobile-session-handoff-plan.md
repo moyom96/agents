@@ -1,7 +1,7 @@
 ---
 title: "feat: Hand off local sessions to mobile apps"
 type: feat
-status: active
+status: completed
 date: 2026-11-02
 origin: docs/brainstorms/2026-11-02-mobile-session-handoff-requirements.md
 ---
@@ -177,7 +177,7 @@ flowchart TD
 
 ## Implementation Units
 
-- [ ] **Unit 1: Query flags in `agents-list`**
+- [x] **Unit 1: Query flags in `agents-list`**
 
 **Goal:** Let agents answer "recent sessions in project X" and "sessions named X with the last message" in one call.
 
@@ -216,7 +216,7 @@ flowchart TD
 
 ---
 
-- [ ] **Unit 2: `agents` skill (query part) and opt-in installer flag**
+- [x] **Unit 2: `agents` skill (query part) and opt-in installer flag**
 
 **Goal:** Teach any agent to query sessions correctly, and install the skill for Claude and Codex only when asked.
 
@@ -250,7 +250,7 @@ flowchart TD
 
 ---
 
-- [ ] **Unit 3: `agents remote` entrypoint and core**
+- [x] **Unit 3: `agents remote` entrypoint and core**
 
 **Goal:** Add the command, the result contract, the tmux mechanics, the lock, and the log, shared by the CLI and the TUI.
 
@@ -301,7 +301,7 @@ flowchart TD
 
 ---
 
-- [ ] **Unit 4: Claude handoff**
+- [x] **Unit 4: Claude handoff**
 
 **Goal:** Resume a Claude session under Remote Control in `agents-remote`, with safe launch, the endpoint and permission guards, keep-awake, a positive startup check, and the open-elsewhere checks.
 
@@ -356,7 +356,7 @@ flowchart TD
 
 ---
 
-- [ ] **Unit 5: Codex handoff check**
+- [x] **Unit 5: Codex handoff check**
 
 **Goal:** Report where to continue a Codex session, refusing when the daemon or remote control is off, and keep the Mac awake for the daemon.
 
@@ -390,7 +390,7 @@ flowchart TD
 
 ---
 
-- [ ] **Unit 6: TUI handoff, remote marker, and remote dialog**
+- [x] **Unit 6: TUI handoff, remote marker, and remote dialog**
 
 **Goal:** Hand off from the browser with `m`, show which sessions are remote, stop them, and attach instead of double-resuming.
 
@@ -436,7 +436,7 @@ flowchart TD
 
 ---
 
-- [ ] **Unit 7: Bridge docs, handoff skill section, and handoff prompts**
+- [x] **Unit 7: Bridge docs, handoff skill section, and handoff prompts**
 
 **Goal:** Document setup, teardown, permissions, data flow, and sleep. Extend the skill with handoff rules. Add the handoff acceptance prompts.
 

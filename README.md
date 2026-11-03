@@ -22,6 +22,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 - An optional native Alacritty tab launcher on macOS.
 - Persistent launch settings and confirmation before deleting saved history.
 - A separate `agents-list` command for listing, JSON output, and scripting.
+- Continue Claude Code and Codex sessions from their phone apps with `m` or `agents remote`.
 
 ## Requirements
 
@@ -91,6 +92,8 @@ including when that directory is a worktree.
 | `Enter` / `Esc` while searching | Finish editing the query |
 | `Enter` on a session | Resume using the configured launch target |
 | `p` | Expand the message preview |
+| `m` | Continue the selected session on your phone |
+| `M` | List and stop sessions running for the phone |
 | `d` | Open the delete confirmation dialog |
 | `s` | Toggle newest-first / oldest-first sorting |
 | `r` | Refresh sessions and the selected preview |
@@ -173,9 +176,22 @@ agents-list example                  # filter project, title, or ID
 agents-list --commands -n 5          # include resume commands
 agents-list --json -n 0              # structured session metadata
 agents-list --client claude --preview SESSION_ID --json
+agents-list --project api -n 10      # one repository, worktrees included
+agents-list --title billing          # session titles only
+agents-list --title billing --last-message --json
 ```
 
-The TUI uses `--json -n 0`, so it has no 30-session cap.
+The TUI uses `--json -n 0`, so it has no 30-session cap. `--last-message` text
+comes from saved sessions and is marked untrusted in JSON.
+
+### Continue on your phone
+
+Press `m` in the browser, or run `agents remote SESSION_ID`, to continue a
+Claude Code session in the Claude app or a Codex session in the ChatGPT app.
+The computer stays on and runs the session. To let Claude Code and Codex
+answer session questions and hand off sessions for you, install the skill with
+`python3 install.py --skills`. See [docs/mobile-handoff.md](docs/mobile-handoff.md)
+for setup, the phone-side bridge, sleep, and permissions.
 
 ## Local data and privacy
 
