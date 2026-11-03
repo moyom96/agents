@@ -20,11 +20,18 @@ class InstallerTest(unittest.TestCase):
     def fake_build(self, args, **kwargs):
         Path(args[args.index("-o") + 1]).write_bytes(b"built browser")
 
-    def install(self):
+    def install(self, homes=None):
         with patch.object(installer.shutil, "which", return_value="go"), \
              patch.object(installer.subprocess, "run", side_effect=self.fake_build), \
-             patch("sys.stdout", new_callable=io.StringIO):
-            installer.install(self.root / "bin", self.root / "config")
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            installer.install(self.root / "bin", self.root / "config", homes)
+        return output.getvalue()
+
+    def homes(self, *names):
+        homes = {name: self.root / name.lower() for name in ("Claude", "Codex")}
+        for name in names:
+            homes[name].mkdir()
+        return homes
 
     def test_installs_both_commands_and_default_settings(self):
         self.install()
@@ -56,6 +63,51 @@ class InstallerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Go 1.26"):
                 installer.install(self.root / "bin", self.root / "config")
         self.assertFalse((self.root / "bin").exists())
+
+    def test_skills_install_identical_copies_for_both_clients(self):
+        homes = self.homes("Claude", "Codex")
+        self.install(homes)
+        source = (installer.ROOT / "skills/agents/SKILL.md").read_text()
+        for home in homes.values():
+            self.assertEqual((home / "skills/agents/SKILL.md").read_text(), source)
+
+    def test_skills_skip_a_client_without_a_home(self):
+        homes = self.homes("Claude")
+        output = self.install(homes)
+        self.assertTrue((homes["Claude"] / "skills/agents/SKILL.md").exists())
+        self.assertFalse(homes["Codex"].exists())
+        self.assertIn("Skipped Codex skill", output)
+
+    def test_skills_replace_a_previously_installed_copy(self):
+        homes = self.homes("Claude")
+        target = homes["Claude"] / "skills/agents/SKILL.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(f"old <!-- {installer.SKILL_MARKER} -->")
+        self.install(homes)
+        self.assertEqual(target.read_text(), (installer.ROOT / "skills/agents/SKILL.md").read_text())
+
+    def test_skills_refuse_foreign_files_and_symlinks_before_installing(self):
+        homes = self.homes("Claude")
+        target = homes["Claude"] / "skills/agents/SKILL.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("my own skill")
+        with self.assertRaisesRegex(RuntimeError, "not installed by this installer"):
+            self.install(homes)
+        self.assertEqual(target.read_text(), "my own skill")
+        self.assertFalse((self.root / "bin").exists())
+        target.unlink()
+        own = self.root / "own.md"
+        own.write_text("linked skill")
+        target.symlink_to(own)
+        with self.assertRaisesRegex(RuntimeError, "symlink"):
+            self.install(homes)
+        self.assertEqual(own.read_text(), "linked skill")
+
+    def test_default_install_creates_no_skill_directories(self):
+        homes = self.homes("Claude", "Codex")
+        self.install()
+        for home in homes.values():
+            self.assertFalse((home / "skills").exists())
 
 
 if __name__ == "__main__":

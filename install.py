@@ -10,6 +10,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parent
+SKILL_MARKER = "installed-by: agents install.py --skills"
 
 
 def install_file(source, target, mode):
@@ -24,7 +25,29 @@ def install_file(source, target, mode):
         Path(temporary).unlink(missing_ok=True)
 
 
-def install(bin_dir, config_dir):
+def skill_targets(homes):
+    targets = []
+    for client, home in homes.items():
+        if not home.is_dir():
+            print(f"Skipped {client} skill: {home} does not exist.")
+            continue
+        target = home / "skills/agents/SKILL.md"
+        if target.is_symlink() or target.parent.is_symlink():
+            raise RuntimeError(f"{target} is a symlink. Remove it to install the skill.")
+        if target.exists() and SKILL_MARKER not in target.read_text(errors="replace"):
+            raise RuntimeError(f"{target} was not installed by this installer. Move it aside to install the skill.")
+        targets.append(target)
+    return targets
+
+
+def skill_homes():
+    homes = {"Claude": Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude"),
+             "Codex": Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")}
+    return {client: home.expanduser().resolve() for client, home in homes.items()}
+
+
+def install(bin_dir, config_dir, homes=None):
+    targets = skill_targets(homes or {})
     go = shutil.which("go")
     if not go:
         raise RuntimeError("Go 1.26 or later is required to build. Install Go and add it to PATH.")
@@ -33,6 +56,9 @@ def install(bin_dir, config_dir):
         subprocess.run([go, "build", "-trimpath", "-o", str(binary), "."], cwd=ROOT, check=True)
         install_file(binary, bin_dir / binary.name, 0o755)
         install_file(ROOT / "bin/agents-list", bin_dir / "agents-list", 0o755)
+    for target in targets:
+        install_file(ROOT / "skills/agents/SKILL.md", target, 0o644)
+        print(f"Installed agents skill in {target}")
     config = config_dir / "agents/config.toml"
     if not config.exists() and not config.is_symlink():
         install_file(ROOT / "config/config.toml", config, 0o644)
@@ -47,8 +73,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, default=Path.home() / ".local/bin")
     parser.add_argument("--config-dir", type=Path, default=Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"))
+    parser.add_argument("--skills", action="store_true", help="Also install the agents skill for Claude Code and Codex")
     args = parser.parse_args()
     try:
-        install(args.bin_dir.expanduser().resolve(), args.config_dir.expanduser().resolve())
+        install(args.bin_dir.expanduser().resolve(), args.config_dir.expanduser().resolve(),
+                skill_homes() if args.skills else None)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Installation failed: {error}\n")
