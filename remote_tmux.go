@@ -113,18 +113,25 @@ func remoteWindowFor(key string) (remoteWindow, bool) {
 }
 
 func createRemoteWindow(name, cwd string, payload []string) (string, error) {
-	command := []string{"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "=" + remoteSession + ":", "-n", name, "-c", cwd, "--"}
-	command = append(command, payload...)
+	// A placeholder holds the window open until remain-on-exit is set on it alone,
+	// so a Claude that exits at once still leaves its output to classify.
+	placeholder := []string{"-n", name, "-c", cwd, "--", "sleep", "600"}
+	command := append([]string{"new-window", "-d", "-P", "-F", "#{window_id}", "-t", "=" + remoteSession + ":"}, placeholder...)
 	if _, err := tmux("has-session", "-t", "="+remoteSession); err != nil {
-		command = []string{"new-session", "-d", "-P", "-F", "#{window_id}", "-s", remoteSession, "-x", "200", "-y", "50", "-n", name, "-c", cwd, "--"}
-		command = append(command, payload...)
-		command = append(command, ";", "set-option", "-w", "remain-on-exit", "on",
-			";", "set-hook", "after-new-window", "set-option -w remain-on-exit on")
+		command = append([]string{"new-session", "-d", "-P", "-F", "#{window_id}", "-s", remoteSession, "-x", "200", "-y", "50"}, placeholder...)
 	}
 	id, err := tmux(command...)
 	id, _, _ = strings.Cut(id, "\n")
 	if err != nil || !strings.HasPrefix(id, "@") {
 		return "", fmt.Errorf("tmux could not create the remote window")
+	}
+	if err := setWindowOption(id, "remain-on-exit", "on"); err != nil {
+		tmux("kill-window", "-t", id)
+		return "", err
+	}
+	if _, err := tmux(append([]string{"respawn-pane", "-k", "-t", id, "-c", cwd, "--"}, payload...)...); err != nil {
+		tmux("kill-window", "-t", id)
+		return "", err
 	}
 	return id, nil
 }

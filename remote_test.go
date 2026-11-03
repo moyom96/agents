@@ -363,6 +363,23 @@ func TestConcurrentClaudeHandoffsCreateOneWindow(t *testing.T) {
 	}
 }
 
+func TestOnlyHandedOffWindowsKeepDeadPanes(t *testing.T) {
+	row := remoteFixture(t, "connected")
+	result := handoff(row, remoteOptions{})
+	if result.Status != "started" {
+		t.Fatalf("handoff: %+v", result)
+	}
+	if value, _ := tmux("show-options", "-wv", "-t", result.Window, "remain-on-exit"); strings.TrimSpace(value) != "on" {
+		t.Fatalf("remote window remain-on-exit = %q", value)
+	}
+	manual, _ := tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "="+remoteSession+":", "--", "true")
+	manual = strings.TrimSpace(manual)
+	time.Sleep(300 * time.Millisecond)
+	if windows, _ := tmux("list-windows", "-t", "="+remoteSession, "-F", "#{window_id}"); strings.Contains(windows, manual) {
+		t.Fatalf("manual window %s stayed after its command exited: %s", manual, windows)
+	}
+}
+
 func TestRemoteListAndStopFromTheCommandLine(t *testing.T) {
 	row := remoteFixture(t, "connected")
 	loadIndex = func() ([]session, error) { return []session{row}, nil }
