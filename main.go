@@ -39,6 +39,12 @@ type model struct {
 	previewToken                    uint64
 	previewLoading, previewExpanded bool
 	previewViewport                 viewport.Model
+	remote                          []remoteListing
+	handingOff, remoteDialog        bool
+	remoteConfirmStop               bool
+	remoteStopping                  bool
+	remoteCursor                    int
+	pendingRemote                   *remotePrompt
 }
 
 func newModel() model {
@@ -168,7 +174,23 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessions, m.refreshed = msg.sessions, time.Now()
 			m.updateProjects()
 			m.filter(true)
+			return m, listRemoteCmd()
 		}
+	case remoteListed:
+		m.remote = msg.listings
+		m.remoteCursor = min(m.remoteCursor, max(0, len(m.remote)-1))
+	case remoteHandedOff:
+		return m.handedOff(msg)
+	case remoteStopped:
+		m.remoteStopping = false
+		if remoteStatuses[msg.result.Status].exit != 0 {
+			m.err = fmt.Errorf("%s", msg.result.Message)
+		} else {
+			m.notice = msg.result.Message
+		}
+		return m, listRemoteCmd()
+	case remoteAttached:
+		m.opening, m.err = false, msg.err
 	case sessionOpened:
 		m.opening, m.err = false, msg.err
 		if msg.err == nil {
@@ -208,6 +230,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.pendingDelete != nil {
 			return m.updateDeleteDialog(msg)
+		}
+		if m.pendingRemote != nil {
+			return m.updateRemotePrompt(msg)
+		}
+		if m.remoteDialog {
+			return m.updateRemoteDialog(msg)
 		}
 		if key == "ctrl+c" {
 			return m, tea.Quit
@@ -264,6 +292,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingDelete, m.err = &row, nil
 				m.deletePrompt = newDeletePrompt()
 			}
+		case "m":
+			return m.startHandoff()
+		case "M":
+			if m.width >= 70 && m.height >= 24 {
+				m.remoteDialog, m.remoteConfirmStop = true, false
+				return m, listRemoteCmd()
+			}
 		case "r":
 			if !m.loading {
 				m.loading, m.err, m.notice = true, nil, ""
@@ -272,6 +307,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.focus != 2 {
 				m.focus = 2
+			} else if row, ok := m.selected(); ok && !m.opening && row.Client == "claude" && m.remoteWindow(row) != "" {
+				window := m.remoteWindow(row)
+				m.opening, m.err, m.notice = true, nil, ""
+				return m, func() tea.Msg { return remoteAttached{err: tuiAttach(window)} }
 			} else if row, ok := m.selected(); ok && !m.opening {
 				config, err := loadSettings()
 				if err != nil {

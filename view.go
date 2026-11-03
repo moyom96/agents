@@ -108,6 +108,9 @@ func (m model) sessionPanel(width, height int) string {
 		}
 		date := row.LastActivity.Local().Format("02/01/2006 15:04")
 		meta := fmt.Sprintf("    %s  %-8s %s", date, row.Client, row.locationLabel())
+		if m.isRemote(row) {
+			meta = fmt.Sprintf("    %s  %-8s on phone · %s", date, row.Client, row.locationLabel())
+		}
 		lines = append(lines, label, muted.Render(fit(meta, width-4)))
 	}
 	if len(m.visible) == 0 {
@@ -125,7 +128,7 @@ func (m model) sessionPanel(width, height int) string {
 }
 
 func shortcutLines(width int) []string {
-	items := []string{"Tab panels", "↑↓/jk move", "/ search", "Enter open", "p preview", "d delete", "s sort", "r refresh", ", settings", "Esc reset", "q quit"}
+	items := []string{"Tab panels", "↑↓/jk move", "/ search", "Enter open", "m phone", "M remote", "p preview", "d delete", "s sort", "r refresh", ", settings", "Esc reset", "q quit"}
 	lines := []string{" " + items[0]}
 	for _, item := range items[1:] {
 		last := len(lines) - 1
@@ -149,6 +152,9 @@ func (m model) detailsLines() []string {
 			muted.Render("UPDATED  ") + row.LastActivity.Local().Format("02/01/2006 15:04:05 MST"),
 			muted.Render("CLIENT   ") + clean(row.Client),
 			muted.Render("SESSION  ") + clean(row.ID),
+		}
+		if m.isRemote(row) {
+			lines = append(lines, muted.Render("REMOTE   ")+"Running for the phone · Enter attaches · M lists")
 		}
 	}
 	return lines
@@ -185,6 +191,8 @@ func (m model) View() tea.View {
 		status = "Refreshing sessions..."
 	} else if m.opening {
 		status = "Opening session..."
+	} else if m.handingOff {
+		status = "Preparing the session for your phone..."
 	} else if m.err != nil {
 		status = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(clean(m.err.Error()))
 	} else if m.warning != "" {
@@ -204,6 +212,12 @@ func (m model) View() tea.View {
 	}
 	if m.previewExpanded {
 		view.Content = m.previewDialog(view.Content)
+	}
+	if m.pendingRemote != nil {
+		view.Content = m.remotePromptDialog(view.Content)
+	}
+	if m.remoteDialog {
+		view.Content = m.remoteDialogView(view.Content)
 	}
 	return view
 }

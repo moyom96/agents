@@ -191,6 +191,15 @@ type remoteListing struct {
 	Window string `json:"window"`
 }
 
+func windowListings() []remoteListing {
+	listings := []remoteListing{}
+	for _, window := range liveRemoteWindows() {
+		client, id, _ := strings.Cut(window.Key, ":")
+		listings = append(listings, remoteListing{Client: client, ID: id, Window: window.ID})
+	}
+	return listings
+}
+
 func remoteListings() []remoteListing {
 	titles := map[string]string{}
 	if rows, err := loadIndex(); err == nil {
@@ -198,10 +207,9 @@ func remoteListings() []remoteListing {
 			titles[row.Client+":"+row.ID] = limit(row.name(), 120)
 		}
 	}
-	listings := []remoteListing{}
-	for _, window := range liveRemoteWindows() {
-		client, id, _ := strings.Cut(window.Key, ":")
-		listings = append(listings, remoteListing{Client: client, ID: id, Title: titles[window.Key], Window: window.ID})
+	listings := windowListings()
+	for i := range listings {
+		listings[i].Title = titles[listings[i].Client+":"+listings[i].ID]
 	}
 	return listings
 }
