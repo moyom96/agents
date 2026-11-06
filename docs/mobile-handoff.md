@@ -4,7 +4,7 @@
 
 | Client | Phone app | What `agents remote` does | Name on the phone |
 | --- | --- | --- | --- |
-| Claude Code | Claude app → Code | Resumes the session under Remote Control in a detached `agents-remote` tmux session | `claude · <project> · <title>` |
+| Claude Code | Claude app → Code | Resumes the session under Remote Control in a detached `agents-remote` tmux session | `<project> - <title>` |
 | Codex CLI | ChatGPT app → Codex | Checks that the remote-control daemon is running; the app already lists every local session | `<title> (<first 8 characters of the ID>)` |
 | OpenCode, Cursor | None | Refuses with an explanation | |
 
