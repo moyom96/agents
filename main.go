@@ -109,9 +109,11 @@ func (m *model) updateProjects() {
 	if m.project < len(m.projects) {
 		previous = m.projects[m.project]
 	}
+	// The selected project stays listed while any session lives there, even when
+	// the chosen client has none, so changing clients never clears it.
 	paths := map[string]bool{}
 	for _, row := range m.sessions {
-		if (m.client == 0 || row.Client == clients[m.client]) && row.projectPath() != "" {
+		if (m.client == 0 || row.Client == clients[m.client] || row.projectPath() == previous) && row.projectPath() != "" {
 			paths[row.projectPath()] = true
 		}
 	}
@@ -386,7 +388,6 @@ func (m *model) navigate(key string) {
 		*position = max(0, count-1)
 	}
 	if m.focus == 0 {
-		m.project = 0
 		m.updateProjects()
 	}
 	if m.focus != 2 {

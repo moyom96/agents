@@ -68,6 +68,23 @@ func TestSortAndRefreshKeepTheSelectedSession(t *testing.T) {
 	}
 }
 
+func TestClientNavigationKeepsTheSelectedProject(t *testing.T) {
+	m := fixtureModel()
+	m.focus = 1
+	for m.projects[m.project] != "/other/api" {
+		m, _ = press(m, tea.KeyDown)
+	}
+	m.focus = 0
+	m, _ = press(m, tea.KeyDown)
+	if clients[m.client] != "claude" || m.projects[m.project] != "/other/api" || len(m.visible) != 0 {
+		t.Fatalf("claude: project %q, %d visible", m.projects[m.project], len(m.visible))
+	}
+	m, _ = press(m, tea.KeyDown)
+	if clients[m.client] != "codex" || m.projects[m.project] != "/other/api" || len(m.visible) != 1 || m.visible[0].ID != "c" {
+		t.Fatalf("codex: project %q, visible %#v", m.projects[m.project], m.visible)
+	}
+}
+
 func TestNavigationResetAndEmptyResults(t *testing.T) {
 	m := fixtureModel()
 	m.focus = 0
