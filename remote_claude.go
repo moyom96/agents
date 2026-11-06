@@ -90,7 +90,7 @@ func remoteName(row session) string {
 	if title == "" {
 		title = shortID(row.ID)
 	}
-	raw := "claude · " + filepath.Base(row.projectPath()) + " · " + title
+	raw := filepath.Base(row.projectPath()) + " - " + title
 	safe := strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune(" -_.·:/", r) {
 			return r
