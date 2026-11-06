@@ -11,6 +11,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// The default launch target depends on running inside Herdr; tests opt in explicitly.
+func TestMain(m *testing.M) {
+	os.Unsetenv("HC_TERMINAL_ID")
+	os.Exit(m.Run())
+}
+
 func fixtureModel() model {
 	m := newModel()
 	m.loading, m.width, m.height = false, 110, 32

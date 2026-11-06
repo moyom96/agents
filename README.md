@@ -18,7 +18,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 - Combined client, project, and session-name filters.
 - Git worktrees grouped under their main repository, preserving the launch directory.
 - Recent-message previews, with a scrollable expanded view that opens at the latest message.
-- Resume sessions in a new tmux window, leaving the browser open.
+- Resume sessions in a new Herdr tab or tmux window, leaving the browser open.
 - An optional native Alacritty tab launcher on macOS.
 - Persistent launch settings and confirmation before deleting saved history.
 - A separate `agents-list` command for listing, JSON output, and scripting.
@@ -29,10 +29,10 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 macOS or Linux, Python 3.9 or later, and Go 1.26 or later to build.
 The TUI needs a terminal at least 70 columns by 24 rows.
 
-Install tmux to resume sessions and Git to group worktrees. Install the clients
+Install Herdr or tmux to resume sessions, and Git to group worktrees. Install the clients
 you want to resume and make their commands available on `PATH`:
 `claude`, `codex`, `opencode`, or `cursor-agent`.
-You can browse saved histories without starting these clients or tmux.
+You can browse saved histories without starting these clients, Herdr, or tmux.
 
 The reader follows local storage formats, which may change between client versions.
 Windows is not currently supported.
@@ -69,10 +69,11 @@ With mise, select Go first, for example `mise exec go@1.26 -- python3 install.py
 
 ## Use
 
-Start the browser from inside tmux:
+Start the browser in a Herdr terminal, or from inside tmux:
 
 ```sh
-tmux new-session -A -s main
+agents                              # in Herdr
+tmux new-session -A -s main         # or in tmux
 agents
 ```
 
@@ -139,7 +140,14 @@ or `$XDG_CONFIG_HOME/agents/config.toml` when set:
 target = "tmux-window"
 ```
 
-`tmux-window` is the default. It opens a window in the browser's tmux session.
+Inside a Herdr terminal the default is `herdr-tab`; elsewhere it is `tmux-window`.
+
+`herdr-tab` opens a tab in the browser's Herdr space with `herdr-app` and needs
+neither tmux nor `TMUX`. `hc` and `herdr-app` must be on `PATH`. Phone handoffs
+follow this setting: with `herdr-tab` they run in a Herdr space named
+`agents-remote` (see [docs/mobile-handoff.md](docs/mobile-handoff.md)).
+
+`tmux-window` opens a window in the browser's tmux session.
 `terminal-tab` currently supports macOS Alacritty with its default IPC socket
 and Cmd+T binding, configured to attach to the same tmux server at startup.
 The launcher opens a native tab and replaces only that new tab's tmux client

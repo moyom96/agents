@@ -43,7 +43,7 @@ var remoteStatuses = map[string]struct {
 	"unsupported_client":         {2, "No mobile app can drive local OpenCode or Cursor sessions."},
 	"not_remote":                 {2, "This session is not running remotely."},
 	"usage_error":                {2, remoteUsage},
-	"open_in_agents_window":      {4, "This session is open in a tmux window that agents opened. Close that window first."},
+	"open_in_agents_window":      {4, "This session is open in a window or tab that agents opened. Close it first."},
 	"open_elsewhere":             {4, "This session is open in another terminal. Run /rc inside it to continue on your phone, or close it first."},
 	"maybe_open":                 {4, "A Claude session is running in this project and may be this one. Run /rc inside it to continue on your phone, or close it and retry with --confirm-closed."},
 	"consent_required":           {5, "Remote Control needs a one-time confirmation. At the laptop, run `claude --remote-control` once and accept it."},
@@ -60,6 +60,8 @@ var remoteStatuses = map[string]struct {
 	"client_missing":             {5, "The client is not installed or is missing from PATH."},
 	"tmux_missing":               {5, "tmux 3.2 or later is required to continue Claude sessions on the phone."},
 	"tmux_failed":                {5, "tmux could not create the remote window."},
+	"herdr_missing":              {5, "Herdr tabs are selected, but hc or herdr-app is missing from PATH. Install Herdr, or choose a tmux launch target."},
+	"herdr_failed":               {5, "Herdr could not create or stop the remote tab."},
 	"directory_missing":          {5, "The session's project directory no longer exists."},
 }
 
@@ -96,8 +98,8 @@ func stopRemote(row session) remoteResult {
 	if !found {
 		return newResult(row, "not_remote")
 	}
-	if _, err := tmux("kill-window", "-t", window.ID); err != nil {
-		return newResult(row, "tmux_failed")
+	if backend := remote(); backend.kill(window.ID) != nil {
+		return newResult(row, backend.name()+"_failed")
 	}
 	result := newResult(row, "stopped")
 	logRemote(result)

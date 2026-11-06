@@ -17,6 +17,7 @@ func newSettingsPrompt(target string) *huh.Select[string] {
 	prompt := huh.NewSelect[string]().Options(
 		huh.NewOption("New tmux window", "tmux-window"),
 		huh.NewOption("New Alacritty tab (macOS)", "terminal-tab"),
+		huh.NewOption("New Herdr tab", "herdr-tab"),
 	).Value(&target)
 	prompt.WithTheme(dialogTheme())
 	prompt.WithKeyMap(huh.NewDefaultKeyMap())
@@ -64,8 +65,9 @@ func (m model) settingsDialog(background string) string {
 	lines := []string{bold.Render("Open sessions in"), ""}
 	lines = append(lines, strings.Split(m.settingsPrompt.View(), "\n")...)
 	lines = append(lines, "",
-		"Tabs require Alacritty on macOS with tmux startup.",
-		"macOS Accessibility access is required for tabs.", "",
+		"Alacritty tabs require macOS, tmux startup, and",
+		"Accessibility access. Herdr tabs need hc and",
+		"herdr-app; phone handoffs then run in Herdr too.", "",
 		hint)
 	return m.dialogOverlay(background, "SETTINGS", lines)
 }

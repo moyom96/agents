@@ -71,7 +71,66 @@ func tmuxSupported() bool {
 	return err == nil && tmuxVersionSupported(string(output))
 }
 
-func remoteWindows() []remoteWindow {
+// remoteBackend is where phone handoffs run: tmux, or Herdr for the herdr-tab target.
+type remoteBackend interface {
+	name() string  // status prefix: "<name>_missing", "<name>_failed"
+	where() string // shown in the remote sessions dialog
+	available() bool
+	windows() []remoteWindow
+	create(name, cwd, key string, payload []string) (string, error)
+	kill(id string) error
+	screen(id string) (text string, dead bool, err error)
+	localWindows(key string) []localWindow
+	attach(id string) error
+}
+
+var remote = func() remoteBackend {
+	config, _ := loadSettings()
+	return backendFor(config.Launch.Target)
+}
+
+func backendFor(target string) remoteBackend {
+	if target == "herdr-tab" {
+		return herdrBackend{}
+	}
+	return tmuxBackend{}
+}
+
+func remoteWindows() []remoteWindow { return remote().windows() }
+
+func localWindows(key string) []localWindow { return remote().localWindows(key) }
+
+func liveRemoteWindows() []remoteWindow {
+	backend := remote()
+	var live []remoteWindow
+	for _, window := range backend.windows() {
+		if window.Dead {
+			backend.kill(window.ID)
+			continue
+		}
+		live = append(live, window)
+	}
+	return live
+}
+
+func remoteWindowFor(key string) (remoteWindow, bool) {
+	for _, window := range liveRemoteWindows() {
+		if window.Key == key {
+			return window, true
+		}
+	}
+	return remoteWindow{}, false
+}
+
+type tmuxBackend struct{}
+
+func (tmuxBackend) name() string { return "tmux" }
+
+func (tmuxBackend) where() string { return "tmux session " + remoteSession }
+
+func (tmuxBackend) available() bool { return tmuxSupported() }
+
+func (tmuxBackend) windows() []remoteWindow {
 	if _, err := tmux("has-session", "-t", "="+remoteSession); err != nil {
 		return nil
 	}
@@ -91,28 +150,7 @@ func remoteWindows() []remoteWindow {
 	return windows
 }
 
-func liveRemoteWindows() []remoteWindow {
-	var live []remoteWindow
-	for _, window := range remoteWindows() {
-		if window.Dead {
-			tmux("kill-window", "-t", window.ID)
-			continue
-		}
-		live = append(live, window)
-	}
-	return live
-}
-
-func remoteWindowFor(key string) (remoteWindow, bool) {
-	for _, window := range liveRemoteWindows() {
-		if window.Key == key {
-			return window, true
-		}
-	}
-	return remoteWindow{}, false
-}
-
-func createRemoteWindow(name, cwd string, payload []string) (string, error) {
+func (tmuxBackend) create(name, cwd, key string, payload []string) (string, error) {
 	// A placeholder holds the window open until remain-on-exit is set on it alone,
 	// so a Claude that exits at once still leaves its output to classify.
 	placeholder := []string{"-n", name, "-c", cwd, "--", "sleep", "600"}
@@ -133,7 +171,35 @@ func createRemoteWindow(name, cwd string, payload []string) (string, error) {
 		tmux("kill-window", "-t", id)
 		return "", err
 	}
+	if err := setWindowOption(id, "@agents-remote", key); err != nil {
+		tmux("kill-window", "-t", id)
+		return "", err
+	}
 	return id, nil
+}
+
+func (tmuxBackend) kill(id string) error {
+	_, err := tmux("kill-window", "-t", id)
+	return err
+}
+
+func (tmuxBackend) screen(id string) (string, bool, error) {
+	dead, err := tmux("display-message", "-p", "-t", id, "#{pane_dead}")
+	text, _ := tmux("capture-pane", "-p", "-J", "-t", id)
+	return text, dead == "1", err
+}
+
+func (tmuxBackend) attach(window string) error {
+	if os.Getenv("TMUX") == "" {
+		return fmt.Errorf("start this browser inside tmux to attach to a remote session")
+	}
+	if socket, _, _ := strings.Cut(os.Getenv("TMUX"), ","); socket != remoteServerSocket() {
+		return fmt.Errorf("remote sessions run on the default tmux server; attach with `tmux attach -t %s`", remoteSession)
+	}
+	if output, err := exec.Command("tmux", "switch-client", "-t", window).CombinedOutput(); err != nil {
+		return fmt.Errorf("attach to the remote session: %v. %s", err, clean(string(output)))
+	}
+	return nil
 }
 
 func setWindowOption(id, option, value string) error {
@@ -146,7 +212,7 @@ type localWindow struct {
 	PanePID int
 }
 
-func localWindows(key string) []localWindow {
+func (tmuxBackend) localWindows(key string) []localWindow {
 	output, err := tmux("list-panes", "-a", "-F", "#{window_id}\t#{@agents-local}\t#{pane_pid}")
 	if err != nil {
 		return nil
