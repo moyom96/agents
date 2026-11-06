@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -15,9 +16,19 @@ type settings struct {
 	} `toml:"launch"`
 }
 
+var launchTargets = []string{"tmux-window", "terminal-tab", "herdr-tab"}
+
+// Inside a Herdr terminal there is usually no tmux, so Herdr tabs are the default there.
+func defaultLaunchTarget() string {
+	if os.Getenv("HC_TERMINAL_ID") != "" {
+		return "herdr-tab"
+	}
+	return "tmux-window"
+}
+
 func loadSettings() (settings, error) {
 	var config settings
-	config.Launch.Target = "tmux-window"
+	config.Launch.Target = defaultLaunchTarget()
 	path, err := settingsPath()
 	if err != nil {
 		return config, err
@@ -32,8 +43,8 @@ func loadSettings() (settings, error) {
 	if keys := meta.Undecoded(); len(keys) != 0 {
 		return config, fmt.Errorf("unknown setting: %s", keys[0])
 	}
-	if config.Launch.Target != "tmux-window" && config.Launch.Target != "terminal-tab" {
-		return config, fmt.Errorf("launch.target must be tmux-window or terminal-tab")
+	if !slices.Contains(launchTargets, config.Launch.Target) {
+		return config, fmt.Errorf("launch.target must be tmux-window, terminal-tab, or herdr-tab")
 	}
 	return config, nil
 }
@@ -51,7 +62,7 @@ func settingsPath() (string, error) {
 }
 
 func saveLaunchTarget(target string) error {
-	if target != "tmux-window" && target != "terminal-tab" {
+	if !slices.Contains(launchTargets, target) {
 		return fmt.Errorf("invalid launch target")
 	}
 	config, err := loadSettings()
@@ -96,8 +107,11 @@ func saveLaunchTarget(target string) error {
 }
 
 func launchLabel(target string) string {
-	if target == "terminal-tab" {
+	switch target {
+	case "terminal-tab":
 		return "terminal tab"
+	case "herdr-tab":
+		return "Herdr tab"
 	}
 	return "tmux window"
 }
