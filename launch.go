@@ -56,9 +56,10 @@ func openSession(row session) sessionOpened {
 	if err != nil {
 		return fail(err)
 	}
+	herdr := config.Launch.Target == "herdr-tab"
 	pane := os.Getenv("TMUX_PANE")
-	if os.Getenv("TMUX") == "" || pane == "" {
-		return fail(fmt.Errorf("start this browser inside tmux to open a session"))
+	if !herdr && (os.Getenv("TMUX") == "" || pane == "") {
+		return fail(fmt.Errorf("start this browser inside tmux to open a session, or choose Herdr tabs in settings"))
 	}
 	info, err := os.Stat(row.Cwd)
 	if err != nil || !info.IsDir() {
@@ -70,6 +71,12 @@ func openSession(row session) sessionOpened {
 	}
 	if _, err := exec.LookPath(args[0]); err != nil {
 		return fail(fmt.Errorf("%s is not installed or is missing from PATH", row.Client))
+	}
+	if herdr {
+		if err := openHerdrTab(row, args); err != nil {
+			return fail(err)
+		}
+		return sessionOpened{name: row.name(), target: config.Launch.Target}
 	}
 	target, err := exec.Command("tmux", "display-message", "-p", "-t", pane, "#{session_id}").Output()
 	if err != nil {

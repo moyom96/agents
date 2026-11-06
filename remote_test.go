@@ -45,6 +45,7 @@ func remoteFixture(t *testing.T, mode string) session {
 	t.Setenv("SHELL", filepath.Join(bin, "login-shell"))
 	t.Setenv("ARGS_FILE", filepath.Join(bin, "args"))
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	for _, name := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"} {
 		t.Setenv(name, "")
