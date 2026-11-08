@@ -157,7 +157,7 @@ func claudeHandoff(row session, options remoteOptions) remoteResult {
 	case "open_in_agents_window":
 	default:
 		if window != "" {
-			tmux("kill-window", "-t", window)
+			remote().kill(window)
 		}
 		result.Window = ""
 	}
@@ -171,8 +171,8 @@ func claudePreflight(row session) string {
 	if info, err := os.Stat(row.Cwd); err != nil || !info.IsDir() {
 		return "directory_missing"
 	}
-	if !tmuxSupported() {
-		return "tmux_missing"
+	if backend := remote(); !backend.available() {
+		return backend.name() + "_missing"
 	}
 	return ""
 }
@@ -190,19 +190,16 @@ func claudeWindow(row session, options remoteOptions) (string, string) {
 		shell = "/bin/sh"
 	}
 	name := remoteName(row)
-	window, err := createRemoteWindow(name, row.Cwd, claudePayload(row, name, shell, keepAwake()))
+	backend := remote()
+	window, err := backend.create(name, row.Cwd, key, claudePayload(row, name, shell, keepAwake()))
 	if err != nil {
-		return "", "tmux_failed"
-	}
-	if err := setWindowOption(window, "@agents-remote", key); err != nil {
-		tmux("kill-window", "-t", window)
-		return "", "tmux_failed"
+		return "", backend.name() + "_failed"
 	}
 	return window, ""
 }
 
 func existingWindowStatus(window string) string {
-	text, _ := tmux("capture-pane", "-p", "-J", "-t", window)
+	text, _, _ := remote().screen(window)
 	status := classifyPane(text)
 	if status == "" {
 		status = waitForRemoteControl(window)
@@ -278,13 +275,12 @@ func classifyPane(text string) string {
 func waitForRemoteControl(window string) string {
 	deadline := time.Now().Add(startupTimeout)
 	for {
-		dead, err := tmux("display-message", "-p", "-t", window, "#{pane_dead}")
-		text, _ := tmux("capture-pane", "-p", "-J", "-t", window)
+		text, dead, err := remote().screen(window)
 		status := classifyPane(text)
 		switch {
 		case status != "" && status != "started":
 			return status
-		case err != nil || dead == "1":
+		case err != nil || dead:
 			return "startup_failed"
 		case status == "started":
 			return status

@@ -51,7 +51,7 @@ The exit code is 0 when the user can continue on the phone, 3 for `unconfirmed`,
 | `started`, `already_remote`, `ready`, `ready_warning` | Open `app` and look for `look_for`. For `ready_warning`, add that the session also looks open in a terminal. |
 | `unconfirmed` | Claude started but did not confirm; check the app, or stop it with `agents remote --stop <id>`. |
 | `open_elsewhere` | The session is open in a terminal; the user can run `/rc` inside it, or close it and ask again. |
-| `open_in_agents_window` | The session is open in a tmux window that the `agents` browser opened. The user can close that window (or press `m` in the browser, which offers to), then ask again. Don't close it yourself. |
+| `open_in_agents_window` | The session is open in a Herdr tab or tmux window that the `agents` browser opened. The user can close it (or press `m` in the browser, which offers to), then ask again. Don't close it yourself. |
 | `maybe_open` | A Claude session runs in that project and may be this one. Ask the user. Retry with `--confirm-closed` only when the user explicitly says it is closed or is a different session. |
 | Anything else | Relay `message`; it says what to do at the computer. |
 

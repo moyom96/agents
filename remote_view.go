@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -14,19 +12,8 @@ var (
 	tuiHandoff  = handoff
 	tuiStop     = stopRemote
 	tuiListings = windowListings
-	tuiClose    = func(window string) error { _, err := tmux("kill-window", "-t", window); return err }
-	tuiAttach   = func(window string) error {
-		if os.Getenv("TMUX") == "" {
-			return fmt.Errorf("start this browser inside tmux to attach to a remote session")
-		}
-		if socket, _, _ := strings.Cut(os.Getenv("TMUX"), ","); socket != remoteServerSocket() {
-			return fmt.Errorf("remote sessions run on the default tmux server; attach with `tmux attach -t %s`", remoteSession)
-		}
-		if output, err := exec.Command("tmux", "switch-client", "-t", window).CombinedOutput(); err != nil {
-			return fmt.Errorf("attach to the remote session: %v. %s", err, clean(string(output)))
-		}
-		return nil
-	}
+	tuiClose    = func(window string) error { return remote().kill(window) }
+	tuiAttach   = func(window string) error { return remote().attach(window) }
 )
 
 type remoteHandedOff struct {
@@ -118,7 +105,7 @@ func (m model) updateRemotePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		window := prompt.result.Window
 		return m, func() tea.Msg {
 			if err := tuiClose(window); err != nil {
-				return remoteHandedOff{row: prompt.row, result: newResult(prompt.row, "tmux_failed")}
+				return remoteHandedOff{row: prompt.row, result: newResult(prompt.row, remote().name()+"_failed")}
 			}
 			return remoteHandedOff{row: prompt.row, result: handoffAfterClose(prompt.row)}
 		}
@@ -190,7 +177,7 @@ func (m model) remoteTitle(listing remoteListing) string {
 }
 
 func (m model) remoteDialogView(background string) string {
-	lines := []string{muted.Render("Claude sessions running for the phone in tmux session " + remoteSession), ""}
+	lines := []string{muted.Render("Claude sessions running for the phone in " + backendFor(m.launchTarget).where()), ""}
 	if len(m.remote) == 0 {
 		lines = append(lines, "No remote sessions.")
 	}
