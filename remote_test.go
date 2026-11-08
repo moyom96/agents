@@ -86,10 +86,10 @@ func logLines(t *testing.T) []map[string]any {
 func TestRemoteNameIsSafeAndBounded(t *testing.T) {
 	row := session{ID: "abcdef1234", Cwd: "/work/api", Title: "--fix\n`billing` $(touch ~/pwned); and a very long tail that keeps going on and on"}
 	name := remoteName(row)
-	if strings.ContainsAny(name, "`$();\n~") || len([]rune(name)) > 60 || !strings.HasPrefix(name, "claude · api · --fix billing touch /pwned") {
+	if strings.ContainsAny(name, "`$();\n~") || len([]rune(name)) > 60 || !strings.HasPrefix(name, "api - --fix billing touch /pwned") {
 		t.Fatalf("unsafe name: %q", name)
 	}
-	if name := remoteName(session{ID: "abcdef1234", Cwd: "/work/api"}); name != "claude · api · abcdef12" {
+	if name := remoteName(session{ID: "abcdef1234", Cwd: "/work/api"}); name != "api - abcdef12" {
 		t.Fatalf("untitled name: %q", name)
 	}
 }
@@ -212,7 +212,7 @@ func TestFindOpenSessionMatchesResumeArgvAndSameCwd(t *testing.T) {
 func TestClaudeHandoffStartsOnceAndStops(t *testing.T) {
 	row := remoteFixture(t, "connected")
 	result := handoff(row, remoteOptions{})
-	if result.Status != "started" || result.App == "" || result.LookFor != "claude · "+filepath.Base(row.Cwd)+" · Billing fix" {
+	if result.Status != "started" || result.App == "" || result.LookFor != filepath.Base(row.Cwd)+" - Billing fix" {
 		t.Fatalf("handoff: %+v", result)
 	}
 	if again := handoff(row, remoteOptions{}); again.Status != "already_remote" || again.LookFor != result.LookFor || again.App != result.App {
