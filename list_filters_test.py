@@ -172,6 +172,12 @@ class ListFiltersTest(unittest.TestCase):
         self.assertEqual(lines[-1], "  assistant: line one line two")
         self.assertIn("[tabular]", lines[-2])
 
+    def test_fractional_seconds_of_any_length_keep_the_client_listed(self):
+        self.claude("fraction", self.work, activity="2026-10-20T10:00:00.12345Z")
+        result = self.run_reader("--json", "-n", "0")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual([r["id"] for r in json.loads(result.stdout)], ["fraction"])
+
 
 if __name__ == "__main__":
     unittest.main()
