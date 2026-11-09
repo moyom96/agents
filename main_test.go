@@ -124,6 +124,19 @@ func typeText(m model, letter rune) (model, tea.Cmd) {
 	return next.(model), cmd
 }
 
+func TestUntitledSessionsAreNamedByTheirFirstPrompt(t *testing.T) {
+	cases := map[string]session{
+		"Billing fix":      {Title: "Billing fix", FirstPrompt: "fix billing"},
+		"fix billing":      {FirstPrompt: "fix\nbilling"},
+		"Untitled session": {},
+	}
+	for want, row := range cases {
+		if got := row.name(); got != want {
+			t.Errorf("name() = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestSortAndRefreshKeepTheSelectedSession(t *testing.T) {
 	m := fixtureModel()
 	m.cursor = 1
