@@ -97,9 +97,13 @@ func (m model) sessionPanel(width, height int) string {
 		if i > start {
 			lines = append(lines, "")
 		}
-		label := fit("· "+row.name(), width-4)
+		name := row.name()
+		if match := m.match(row); match != "" {
+			name += " · " + match
+		}
+		label := fit("· "+name, width-4)
 		if i == m.cursor {
-			label = fit("● "+row.name(), width-4)
+			label = fit("● "+name, width-4)
 			if m.focus == 2 {
 				label = selectedStyle.Render(label)
 			} else {
@@ -189,6 +193,8 @@ func (m model) View() tea.View {
 	}
 	if m.loading {
 		status = "Refreshing sessions..."
+	} else if m.searchingMessages {
+		status = "Searching saved messages..."
 	} else if m.opening {
 		status = "Opening session..."
 	} else if m.handingOff {

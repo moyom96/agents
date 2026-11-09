@@ -99,6 +99,18 @@ class PreviewReaderTest(unittest.TestCase):
         db.commit()
         self.assertEqual(self.preview("opencode")["messages"][0]["text"], "One\n\nTwo")
 
+    def test_opencode_search_reads_message_and_part_text(self):
+        db = self.database()
+        db.execute("create table session_v2 (id text)")
+        db.execute("create table session_message (session_id text, type text, seq integer, time_created integer, data text)")
+        for role, data in [("user", {"text": "Question"}),
+                           ("assistant", {"content": [{"type": "text", "text": "Answer"}, {"type": "reasoning", "text": "HIDDEN"}]}),
+                           ("system", {"text": "HIDDEN"})]:
+            db.execute("insert into session_message values (?, ?, 1, 1, ?)", (SESSION, role, json.dumps(data)))
+        db.commit()
+        self.assertEqual(sorted(reader["opencode_written_text"](self.home)[SESSION]),
+                         [("assistant", "Answer"), ("user", "Question")])
+
     def test_missing_invalid_and_encrypted_histories(self):
         self.assertIn("encrypted", self.preview("cursor")["notice"])
         for value in ("../oops", "*", ""):

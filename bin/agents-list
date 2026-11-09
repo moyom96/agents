@@ -331,6 +331,119 @@ def project_matches(row, query):
     return query.lower() in (project, name, name.removesuffix(".git"))
 
 
+# Clients inject instructions, reminders, and command output as user text.
+INJECTED_USER_TEXT = ("<", "# AGENTS.md instructions")
+
+
+def written_blocks(event, client):
+    if client == "claude":
+        message = None if event.get("isSidechain") or event.get("isMeta") else event.get("message")
+    else:
+        payload = event.get("payload")
+        message = payload if event.get("type") == "response_item" and isinstance(payload, dict) and payload.get("type") == "message" else None
+    if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    if not isinstance(content, list):
+        return []
+    role = message["role"]
+    return [(role, block["text"]) for block in content
+            if isinstance(block, dict) and block.get("type") in ("text", "input_text", "output_text")
+            and isinstance(block.get("text"), str) and block["text"].strip()
+            and not (role == "user" and block["text"].lstrip().startswith(INJECTED_USER_TEXT))]
+
+
+def transcript_written_text(paths, client, terms):
+    # Lines without any term cannot match, so most of a large transcript is never parsed.
+    needles = [term.encode() for term in terms] if all(term.isascii() for term in terms) else []
+    for path in paths:
+        data = path.read_bytes()
+        lowered = data.lower()
+        if needles and not all(needle in lowered for needle in needles):
+            continue
+        for line, low in zip(data.split(b"\n"), lowered.split(b"\n")):
+            if needles and not any(needle in low for needle in needles):
+                continue
+            try:
+                event = json.loads(line)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict):
+                yield from written_blocks(event, client)
+
+
+def opencode_written_text(home):
+    path = home / "opencode/opencode.db"
+    tables = {row["name"] for row in database_rows(path, "SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "session_v2" in tables:
+        query = """
+            SELECT session_id, type AS role, json_extract(data, '$.text') AS text
+            FROM session_message WHERE type IN ('user', 'assistant')
+            UNION ALL
+            SELECT m.session_id, m.type, json_extract(c.value, '$.text')
+            FROM session_message m, json_each(m.data, '$.content') c
+            WHERE m.type IN ('user', 'assistant') AND json_extract(c.value, '$.type') = 'text'
+        """
+    elif {"message", "part"} <= tables:
+        query = """
+            SELECT p.session_id, json_extract(m.data, '$.role') AS role, json_extract(p.data, '$.text') AS text
+            FROM part p JOIN message m ON m.id = p.message_id AND m.session_id = p.session_id
+            WHERE json_extract(p.data, '$.type') = 'text' AND coalesce(json_extract(p.data, '$.synthetic'), 0) = 0
+        """
+    else:
+        return {}
+    texts = {}
+    for row in database_rows(path, query):
+        if isinstance(row["text"], str) and row["text"].strip():
+            texts.setdefault(row["session_id"], []).append((row["role"], row["text"]))
+    return texts
+
+
+def message_match(blocks, terms):
+    found, best = set(), (0, "", "")
+    for role, text in blocks:
+        hits = {term for term in terms if term in text.lower()}
+        found |= hits
+        if len(hits) > best[0]:
+            best = (len(hits), role, text)
+    if found != set(terms):
+        return None
+    text = " ".join(best[2].split())
+    lower = text.lower()
+    start = max(0, min(lower.find(term) for term in terms if term in lower) - 40)
+    return {"role": best[1], "text": ("…" if start else "") + text[start:start + 200], "untrusted": True}
+
+
+def grep_rows(rows, query, sources):
+    terms = query.lower().split()
+    if not terms:
+        return rows
+    homes = {client: location.expanduser().resolve() for client, (_, location) in sources.items()}
+    clients = {row["client"] for row in rows}
+    transcripts = {}
+    if "claude" in clients:
+        for path in (homes["claude"] / "projects").glob("*/*.jsonl"):
+            transcripts.setdefault(("claude", path.stem), []).append(path)
+    if "codex" in clients:
+        # Rollout file names end with the session's UUID.
+        for path in (homes["codex"] / "sessions").rglob("*.jsonl"):
+            transcripts.setdefault(("codex", path.stem[-36:]), []).append(path)
+    opencode = opencode_written_text(homes["opencode"]) if "opencode" in clients else {}
+    matched = []
+    for row in rows:
+        if row["client"] == "opencode":
+            blocks = opencode.get(row["id"], [])
+        else:
+            blocks = transcript_written_text(transcripts.get((row["client"], row["id"]), []), row["client"], terms)
+        match = message_match(blocks, terms)
+        if match:
+            row["match"] = match
+            matched.append(row)
+    return matched
+
+
 def last_message(row, home):
     try:
         preview = session_preview(row["client"], row["id"], home)
@@ -368,6 +481,7 @@ def main():
     parser.add_argument("--oldest", action="store_true", help="Show oldest sessions first")
     parser.add_argument("--project", help="Only sessions in this repository, by name or full path (exact match, worktrees included)")
     parser.add_argument("--title", help="Only sessions whose title contains this text")
+    parser.add_argument("--grep", metavar="TEXT", help="Only sessions whose saved user or assistant messages contain every word of TEXT (adds untrusted match text)")
     parser.add_argument("--last-message", action="store_true", help="Include each session's last message (untrusted session text)")
     parser.add_argument("--commands", action="store_true", help="Include commands to resume sessions")
     parser.add_argument("--json", action="store_true", help="Print structured session metadata")
@@ -408,6 +522,8 @@ def main():
     if args.project is not None:
         attach_projects(rows)
         rows = [r for r in rows if project_matches(r, args.project)]
+    if args.grep is not None:
+        rows = grep_rows(rows, args.grep, sources)
     rows.sort(key=lambda r: r["activity"], reverse=not args.oldest)
     rows = rows[:args.limit] if args.limit else rows
     for row in rows:
@@ -425,6 +541,8 @@ def main():
             print(f"{date:26} {row['client']:9} {project[:24]:24} {clean(row['title'])[:65]} [{row['id']}]")
             if args.commands:
                 print(f"  {row['resume']}")
+            if "match" in row:
+                print(f"  {row['match']['role']}: {clean(row['match']['text'])[:120]}")
             if args.last_message:
                 print(f"  {last_message_line(row)}")
     else:
