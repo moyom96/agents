@@ -195,6 +195,20 @@ class ListFiltersTest(unittest.TestCase):
         self.assertEqual(rows["hit"]["match"], {"role": "user", "text": "The password field hides input", "untrusted": True})
         self.assertEqual(rows[codex]["match"]["role"], "assistant")
 
+    def test_sessions_started_by_scripts_are_hidden_unless_requested(self):
+        self.claude("interactive", self.work, events=[{"entrypoint": "cli"}])
+        self.claude("print-mode", self.work, events=[{"entrypoint": "sdk-cli"}])
+        self.claude("resumed-later", self.work, events=[{"entrypoint": "sdk-cli"}, {"entrypoint": "cli"}])
+        self.claude("in-claude-temp", "/private/tmp/claude-501/-work/abc", events=[{"entrypoint": "cli"}])
+        self.codex("codex-tui", self.work)
+        exec_path = self.root / "codex/sessions/2026/10/rollout-codex-exec.jsonl"
+        exec_path.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": "codex-exec", "cwd": str(self.work), "originator": "codex_exec"}}) + "\n")
+        self.assertEqual({r["id"] for r in self.rows("-n", "0")}, {"interactive", "resumed-later", "codex-tui"})
+        everything = self.rows("-n", "0", "--scripted")
+        self.assertEqual(len(everything), 6)
+        self.assertNotIn("scripted", everything[0])
+
     def test_fractional_seconds_of_any_length_keep_the_client_listed(self):
         self.claude("fraction", self.work, activity="2026-10-20T10:00:00.12345Z")
         result = self.run_reader("--json", "-n", "0")

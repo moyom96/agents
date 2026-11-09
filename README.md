@@ -194,6 +194,7 @@ agents-list --project api -n 10      # one repository, worktrees included
 agents-list --title billing          # session titles only
 agents-list --title billing --last-message --json
 agents-list --grep "password reset" -n 0  # words in saved messages
+agents-list --scripted -n 0          # include claude -p and codex exec runs
 ```
 
 The TUI uses `--json -n 0`, so it has no 30-session cap. `--last-message` and
@@ -227,7 +228,11 @@ Codex uses its session index and JSONL rollout files, not its SQLite database.
 Claude uses transcript metadata. OpenCode databases are opened read-only.
 Cursor reads chat metadata and titles, not encrypted message blobs.
 Archived sessions, subagents, and delegated scratchpad conversations are excluded
-where the client exposes enough metadata to identify them.
+where the client exposes enough metadata to identify them. Sessions started by
+scripts are hidden too: Claude Code sessions only ever run with `claude -p`,
+`codex exec` runs, and any session inside Claude's temporary directory.
+A `claude -p` session you later resume interactively is listed again.
+`agents-list --scripted` includes them all.
 
 Last activity means the saved update timestamp, not the last time a terminal
 was focused. File modification time is a fallback and can change after maintenance.
