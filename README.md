@@ -78,7 +78,12 @@ agents
 ```
 
 The browser lists all available top-level sessions. Filters combine, and
-search matches session names without regard to case. Repositories with the same
+search matches session names without regard to case. Once you pause typing a
+query of three or more characters, or press `Enter`, it also finds sessions whose
+saved messages contain every word of the query; each match shows the text it was
+found in. Message search reads what you and the
+agent wrote, not tool output or injected instructions. Cursor messages are
+encrypted, so Cursor sessions only match by name. Repositories with the same
 directory name stay separate. A session always resumes in its recorded directory,
 including when that directory is a worktree.
 
@@ -90,7 +95,8 @@ including when that directory is a worktree.
 | `PageUp` / `PageDown`, `Home` / `End` | Move through longer lists |
 | `/` | Search session names |
 | Any unmapped letter | Start a new search with that letter |
-| `Enter` / `Esc` while searching | Finish editing the query |
+| `Enter` while searching | Finish editing and search saved messages now |
+| `Esc` while searching | Finish editing the query |
 | `Enter` on a session | Resume using the configured launch target |
 | `p` | Expand the message preview |
 | `m` | Continue the selected session on your phone |
@@ -187,10 +193,12 @@ agents-list --client claude --preview SESSION_ID --json
 agents-list --project api -n 10      # one repository, worktrees included
 agents-list --title billing          # session titles only
 agents-list --title billing --last-message --json
+agents-list --grep "password reset" -n 0  # words in saved messages
+agents-list --scripted -n 0          # include claude -p and codex exec runs
 ```
 
-The TUI uses `--json -n 0`, so it has no 30-session cap. `--last-message` text
-comes from saved sessions and is marked untrusted in JSON.
+The TUI uses `--json -n 0`, so it has no 30-session cap. `--last-message` and
+`--grep` match text come from saved sessions and are marked untrusted in JSON.
 
 ### Continue on your phone
 
@@ -220,7 +228,11 @@ Codex uses its session index and JSONL rollout files, not its SQLite database.
 Claude uses transcript metadata. OpenCode databases are opened read-only.
 Cursor reads chat metadata and titles, not encrypted message blobs.
 Archived sessions, subagents, and delegated scratchpad conversations are excluded
-where the client exposes enough metadata to identify them.
+where the client exposes enough metadata to identify them. Sessions started by
+scripts are hidden too: Claude Code sessions only ever run with `claude -p`,
+`codex exec` runs, and any session inside Claude's temporary directory.
+A `claude -p` session you later resume interactively is listed again.
+`agents-list --scripted` includes them all.
 
 Last activity means the saved update timestamp, not the last time a terminal
 was focused. File modification time is a fallback and can change after maintenance.

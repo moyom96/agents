@@ -45,6 +45,37 @@ func readSessions() sessionsLoaded {
 	return sessionsLoaded{sessions: rows, warning: clean(stderr.String())}
 }
 
+type messagesSearched struct {
+	query   string
+	matches map[string]string
+	err     error
+}
+
+func searchMessages(query string) messagesSearched {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "agents-list", "--json", "-n", "0", "--grep="+query).Output()
+	result := messagesSearched{query: query, matches: map[string]string{}}
+	if err != nil && len(output) == 0 {
+		result.err = fmt.Errorf("search messages: %v", err)
+		return result
+	}
+	var rows []struct {
+		session
+		Match struct {
+			Text string `json:"text"`
+		} `json:"match"`
+	}
+	if err := json.Unmarshal(output, &rows); err != nil {
+		result.err = fmt.Errorf("read message search: %w", err)
+		return result
+	}
+	for _, row := range rows {
+		result.matches[sessionKey(row.session)] = clean(row.Match.Text)
+	}
+	return result
+}
+
 func clean(value string) string {
 	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {

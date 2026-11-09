@@ -45,12 +45,15 @@ type model struct {
 	remoteStopping                  bool
 	remoteCursor                    int
 	pendingRemote                   *remotePrompt
+	matches                         map[string]string
+	matchQuery                      string
+	searchingMessages               bool
 }
 
 func newModel() model {
 	search := textinput.New()
 	search.Prompt = "/ "
-	search.Placeholder = "Search session names..."
+	search.Placeholder = "Search session names and messages..."
 	search.CharLimit = 200
 	styles := textinput.DefaultStyles(true)
 	styles.Focused.Prompt, styles.Blurred.Prompt = accent, muted
@@ -82,7 +85,7 @@ func (m *model) filter(keepSelection bool) {
 		if m.project > 0 && row.projectPath() != m.projects[m.project] {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(row.name()), strings.ToLower(m.search.Value())) {
+		if !strings.Contains(strings.ToLower(row.name()), strings.ToLower(m.search.Value())) && m.match(row) == "" {
 			continue
 		}
 		m.visible = append(m.visible, row)
@@ -102,6 +105,34 @@ func (m *model) filter(keepSelection bool) {
 			}
 		}
 	}
+}
+
+func (m model) match(row session) string {
+	if m.matchQuery == "" || m.matchQuery != m.search.Value() {
+		return ""
+	}
+	return m.matches[sessionKey(row)]
+}
+
+type messageSearchRequested string
+
+// Each search reads every transcript, so it waits for a pause in typing and skips
+// queries short enough to match nearly every session.
+func (m model) queueMessageSearch() tea.Cmd {
+	query := m.search.Value()
+	if len([]rune(strings.TrimSpace(query))) < 3 {
+		return nil
+	}
+	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg { return messageSearchRequested(query) })
+}
+
+func (m model) startMessageSearch() (tea.Model, tea.Cmd) {
+	query := m.search.Value()
+	if strings.TrimSpace(query) == "" || query == m.matchQuery {
+		return m, nil
+	}
+	m.searchingMessages, m.err, m.notice = true, nil, ""
+	return m, func() tea.Msg { return searchMessages(query) }
 }
 
 func (m *model) updateProjects() {
@@ -178,6 +209,26 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filter(true)
 			return m, listRemoteCmd()
 		}
+	case messageSearchRequested:
+		if string(msg) == m.search.Value() {
+			return m.startMessageSearch()
+		}
+	case messagesSearched:
+		m.searchingMessages = false
+		if msg.query == m.search.Value() {
+			m.err = msg.err
+			if msg.err == nil {
+				m.matches, m.matchQuery = msg.matches, msg.query
+				m.filter(true)
+				count := 0
+				for _, row := range m.visible {
+					if m.match(row) != "" {
+						count++
+					}
+				}
+				m.notice = fmt.Sprintf("%d sessions here mention %q in their messages", count, msg.query)
+			}
+		}
 	case remoteListed:
 		m.remote = msg.listings
 		m.remoteCursor = min(m.remoteCursor, max(0, len(m.remote)-1))
@@ -244,14 +295,17 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.search.Focused() {
 			switch key {
-			case "esc", "enter", "tab":
+			case "esc", "tab":
 				m.search.Blur()
 				return m, nil
+			case "enter":
+				m.search.Blur()
+				return m.startMessageSearch()
 			default:
 				var cmd tea.Cmd
 				m.search, cmd = m.search.Update(msg)
 				m.filter(false)
-				return m, cmd
+				return m, tea.Batch(cmd, m.queueMessageSearch())
 			}
 		}
 		switch key {

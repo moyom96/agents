@@ -57,6 +57,73 @@ func TestFiltersCombineClientExactProjectAndTitle(t *testing.T) {
 	}
 }
 
+func TestEnterSearchesMessagesAndMatchesApplyOnlyToTheirQuery(t *testing.T) {
+	m := fixtureModel()
+	m.search.Focus()
+	m.search.SetValue("toggle")
+	m.filter(false)
+	m, cmd := press(m, tea.KeyEnter)
+	if cmd == nil || !m.searchingMessages || m.search.Focused() {
+		t.Fatal("Enter should finish editing and start a message search")
+	}
+	next, _ := m.Update(messagesSearched{query: "old", matches: map[string]string{"codex:c": "stale"}})
+	m = next.(model)
+	if len(m.visible) != 0 || m.searchingMessages {
+		t.Fatalf("a result for another query must be ignored, got %#v", m.visible)
+	}
+	next, _ = m.Update(messagesSearched{query: "toggle", matches: map[string]string{"codex:b": "added the toggle"}})
+	m = next.(model)
+	if len(m.visible) != 1 || m.visible[0].ID != "b" {
+		t.Fatalf("message matches should be listed, got %#v", m.visible)
+	}
+	m.project = 0
+	for i, path := range m.projects {
+		if path == "/other/api" {
+			m.project = i
+		}
+	}
+	m.filter(false)
+	if len(m.visible) != 0 {
+		t.Fatal("message matches must respect the selected project")
+	}
+	m.project = 0
+	m.filter(false)
+	if !strings.Contains(ansi.Strip(m.View().Content), "Search workspace · added the toggle") {
+		t.Fatal("the matched message text should follow the session name")
+	}
+	m.search.SetValue("toggl")
+	m.filter(false)
+	if len(m.visible) != 0 {
+		t.Fatal("matches must stop applying once the query changes")
+	}
+}
+
+func TestTypingSearchesMessagesAfterAPauseOnlyForTheCurrentQuery(t *testing.T) {
+	m := fixtureModel()
+	m.search.Focus()
+	var cmd tea.Cmd
+	for _, letter := range "to" {
+		m, cmd = typeText(m, letter)
+	}
+	if _, ok := cmd().(messageSearchRequested); ok {
+		t.Fatal("queries under three characters must not search messages")
+	}
+	m, _ = typeText(m, 'g')
+	next, cmd := m.Update(messageSearchRequested("to"))
+	if cmd != nil || next.(model).searchingMessages {
+		t.Fatal("a pause for an earlier query must not search")
+	}
+	next, cmd = m.Update(messageSearchRequested("tog"))
+	if cmd == nil || !next.(model).searchingMessages {
+		t.Fatal("a pause on the current query should search messages")
+	}
+}
+
+func typeText(m model, letter rune) (model, tea.Cmd) {
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: letter, Text: string(letter)}))
+	return next.(model), cmd
+}
+
 func TestSortAndRefreshKeepTheSelectedSession(t *testing.T) {
 	m := fixtureModel()
 	m.cursor = 1

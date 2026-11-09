@@ -172,6 +172,49 @@ class ListFiltersTest(unittest.TestCase):
         self.assertEqual(lines[-1], "  assistant: line one line two")
         self.assertIn("[tabular]", lines[-2])
 
+    def test_grep_needs_every_word_in_written_text_and_ignores_tools_and_injected_context(self):
+        self.claude("hit", self.work, events=[
+            {"type": "user", "message": {"role": "user", "content": "The password field hides input"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "input": "password visibility"}, {"type": "text", "text": "Added a Visibility toggle"}]}}])
+        self.claude("tools-only", self.work, events=[
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "content": "password visibility"},
+                {"type": "text", "text": "<system-reminder>password visibility</system-reminder>"}]}}])
+        self.claude("one-word", self.work, events=[
+            {"type": "user", "message": {"role": "user", "content": "Reset the password"}}])
+        codex = "01a1ad23-09d2-72f1-aeaa-3533ec7392aa"
+        self.codex(codex, self.work)
+        with (self.root / f"codex/sessions/2026/10/rollout-{codex}.jsonl").open("a") as stream:
+            for role, kind, text in [("user", "input_text", "# AGENTS.md instructions\npassword visibility"),
+                                     ("assistant", "output_text", "The password visibility control is done")]:
+                stream.write(json.dumps({"type": "response_item", "payload": {
+                    "type": "message", "role": role, "content": [{"type": kind, "text": text}]}}) + "\n")
+        rows = {r["id"]: r for r in self.rows("--grep", "PASSWORD visibility", "-n", "0")}
+        self.assertEqual(set(rows), {"hit", codex})
+        self.assertEqual(rows["hit"]["match"], {"role": "user", "text": "The password field hides input", "untrusted": True})
+        self.assertEqual(rows[codex]["match"]["role"], "assistant")
+
+    def test_sessions_started_by_scripts_are_hidden_unless_requested(self):
+        self.claude("interactive", self.work, events=[{"entrypoint": "cli"}])
+        self.claude("print-mode", self.work, events=[{"entrypoint": "sdk-cli"}])
+        self.claude("resumed-later", self.work, events=[{"entrypoint": "sdk-cli"}, {"entrypoint": "cli"}])
+        self.claude("in-claude-temp", "/private/tmp/claude-501/-work/abc", events=[{"entrypoint": "cli"}])
+        self.codex("codex-tui", self.work)
+        exec_path = self.root / "codex/sessions/2026/10/rollout-codex-exec.jsonl"
+        exec_path.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": "codex-exec", "cwd": str(self.work), "originator": "codex_exec"}}) + "\n")
+        self.assertEqual({r["id"] for r in self.rows("-n", "0")}, {"interactive", "resumed-later", "codex-tui"})
+        everything = self.rows("-n", "0", "--scripted")
+        self.assertEqual(len(everything), 6)
+        self.assertNotIn("scripted", everything[0])
+
+    def test_fractional_seconds_of_any_length_keep_the_client_listed(self):
+        self.claude("fraction", self.work, activity="2026-10-20T10:00:00.12345Z")
+        result = self.run_reader("--json", "-n", "0")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual([r["id"] for r in json.loads(result.stdout)], ["fraction"])
+
 
 if __name__ == "__main__":
     unittest.main()
