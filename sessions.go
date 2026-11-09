@@ -16,6 +16,7 @@ type session struct {
 	ID           string    `json:"id"`
 	Cwd          string    `json:"cwd"`
 	Title        string    `json:"title"`
+	FirstPrompt  string    `json:"first_prompt"`
 	LastActivity time.Time `json:"last_activity"`
 	Project      string    `json:"-"`
 	Worktree     string    `json:"-"`
@@ -88,6 +89,9 @@ func clean(value string) string {
 func (s session) name() string {
 	if title := clean(s.Title); title != "" {
 		return title
+	}
+	if prompt := clean(s.FirstPrompt); prompt != "" {
+		return prompt
 	}
 	return "Untitled session"
 }

@@ -121,7 +121,7 @@ class ListFiltersTest(unittest.TestCase):
         result = self.run_reader("--json", env={**self.env, "PATH": str(empty)})
         self.assertEqual(result.returncode, 0, result.stderr)
         for row in json.loads(result.stdout):
-            self.assertEqual(set(row), {"client", "id", "cwd", "title", "activity", "last_activity", "resume"})
+            self.assertEqual(set(row), {"client", "id", "cwd", "title", "first_prompt", "activity", "last_activity", "resume"})
 
     def test_last_message_applies_after_limit_and_marks_text_untrusted(self):
         for index in range(3):
@@ -208,6 +208,26 @@ class ListFiltersTest(unittest.TestCase):
         everything = self.rows("-n", "0", "--scripted")
         self.assertEqual(len(everything), 6)
         self.assertNotIn("scripted", everything[0])
+
+    def test_claude_titles_prefer_custom_then_generated_then_slug_then_first_prompt(self):
+        self.claude("custom", self.work, title="Mine", events=[{"type": "ai-title", "aiTitle": "Generated"}])
+        self.claude("generated", self.work, events=[{"slug": "plan-slug"}, {"type": "ai-title", "aiTitle": "Old"},
+                                                    {"type": "ai-title", "aiTitle": "Generated"}])
+        self.claude("prompt", self.work, events=[{"type": "user", "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+                                                 {"type": "user", "message": {"role": "user", "content": "Fix the\nlogin page"}}])
+        rows = {r["id"]: r for r in self.rows("-n", "0")}
+        self.assertEqual(rows["custom"]["title"], "Mine")
+        self.assertEqual(rows["generated"]["title"], "Generated")
+        self.assertEqual((rows["prompt"]["title"], rows["prompt"]["first_prompt"]), ("", "First message"))
+        self.assertNotIn("first_prompt", rows["custom"])
+
+    def test_untitled_codex_session_gets_its_first_prompt(self):
+        self.codex("01a1ad23-09d2-72f1-aeaa-3533ec7392aa", self.work)
+        with (self.root / "codex/sessions/2026/10/rollout-01a1ad23-09d2-72f1-aeaa-3533ec7392aa.jsonl").open("a") as stream:
+            for text in ("<environment_context>cwd</environment_context>", "Add a password toggle"):
+                stream.write(json.dumps({"type": "response_item", "payload": {
+                    "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}) + "\n")
+        self.assertEqual(self.rows()[0]["first_prompt"], "Add a password toggle")
 
     def test_fractional_seconds_of_any_length_keep_the_client_listed(self):
         self.claude("fraction", self.work, activity="2026-10-20T10:00:00.12345Z")

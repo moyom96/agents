@@ -225,7 +225,9 @@ Standard storage locations and supported overrides:
 | Cursor terminal agent | `~/.cursor/chats` | None |
 
 Codex uses its session index and JSONL rollout files, not its SQLite database.
-Claude uses transcript metadata. OpenCode databases are opened read-only.
+Claude uses transcript metadata, naming sessions by your title, then the title
+Claude Code generated, as its own resume list does. Untitled Claude Code and Codex
+sessions show their first prompt. OpenCode databases are opened read-only.
 Cursor reads chat metadata and titles, not encrypted message blobs.
 Archived sessions, subagents, and delegated scratchpad conversations are excluded
 where the client exposes enough metadata to identify them. Sessions started by

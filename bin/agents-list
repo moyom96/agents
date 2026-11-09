@@ -61,6 +61,8 @@ def codex_sessions(home):
                "title": entry.get("thread_name", ""),
                "scripted": meta.get("originator") == "codex_exec",
                "activity": max(timestamp(entry.get("updated_at")), path.stat().st_mtime)}
+        if not row["title"]:
+            row["first_prompt"] = first_prompt(transcript_edges(path), "codex")
         if session not in rows or row["activity"] > rows[session]["activity"]:
             rows[session] = row
     return list(rows.values())
@@ -84,18 +86,34 @@ def transcript_edges(path):
                 continue
 
 
+def first_prompt(events, client):
+    for event in events:
+        for role, text in written_blocks(event, client) if isinstance(event, dict) else []:
+            if role == "user":
+                return clean(text)[:200]
+    return ""
+
+
 def claude_sessions(home):
     rows = []
     for path in (home / "projects").glob("*/*.jsonl"):
         row = {"client": "claude", "id": path.stem, "cwd": "", "title": "",
                "activity": 0}
         sidechain, entrypoints = False, set()
+        custom = generated = slug = prompt = ""
         for event in transcript_edges(path):
             sidechain = sidechain or event.get("isSidechain", False)
             entrypoints.add(event.get("entrypoint"))
             row["cwd"] = event.get("cwd") or row["cwd"]
-            row["title"] = event.get("customTitle") or row["title"] or event.get("slug", "")
+            custom = event.get("customTitle") or custom
+            generated = event.get("aiTitle") or generated
+            slug = slug or event.get("slug", "")
+            prompt = prompt or first_prompt([event], "claude")
             row["activity"] = max(row["activity"], timestamp(event.get("timestamp")))
+        # Same order as Claude Code's own resume list.
+        row["title"] = custom or generated or slug
+        if not row["title"]:
+            row["first_prompt"] = prompt
         # `claude -p` records sdk-cli; resuming the session interactively adds cli.
         row["scripted"] = "sdk-cli" in entrypoints and "cli" not in entrypoints
         if not sidechain:
@@ -549,7 +567,7 @@ def main():
         for row in rows:
             date = datetime.fromtimestamp(row["activity"]).astimezone().strftime("%d/%m/%Y %H:%M:%S %Z")
             project = clean(Path(row["cwd"]).name) if row["cwd"] else "?"
-            print(f"{date:26} {row['client']:9} {project[:24]:24} {clean(row['title'])[:65]} [{row['id']}]")
+            print(f"{date:26} {row['client']:9} {project[:24]:24} {clean(row['title'] or row.get('first_prompt'))[:65]} [{row['id']}]")
             if args.commands:
                 print(f"  {row['resume']}")
             if "match" in row:
